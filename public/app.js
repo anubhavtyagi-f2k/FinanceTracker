@@ -266,11 +266,12 @@ async function renderDashboard(content) {
   });
 
   const poStatusLabels = Object.keys(d.billing.poStatusCounts);
+  const poStatusColors = { Awaiting: amber, Raised: nivea, Received: green, Overdue: red };
   charts.poStatus = new Chart($('#po-status-chart'), {
     type: 'doughnut',
     data: {
       labels: poStatusLabels,
-      datasets: [{ data: poStatusLabels.map(k => d.billing.poStatusCounts[k]), backgroundColor: [grey, amber, green, red] }]
+      datasets: [{ data: poStatusLabels.map(k => d.billing.poStatusCounts[k]), backgroundColor: poStatusLabels.map(k => poStatusColors[k]) }]
     },
     options: { plugins: { legend: { position: 'bottom' } } }
   });
