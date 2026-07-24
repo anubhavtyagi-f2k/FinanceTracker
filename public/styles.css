@@ -1,0 +1,54 @@
+:root {
+  --navy: #0f2a4a;
+  --blue: #1a56db;
+  --green: #16a34a;
+  --amber: #d97706;
+  --red: #dc2626;
+  --bg: #f5f7fa;
+  --border: #e2e6eb;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: #1e2733; }
+.hidden { display: none !important; }
+
+.login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--navy); }
+.login-card { background: white; padding: 40px; border-radius: 12px; width: 320px; text-align: center; }
+.login-card h1 { font-size: 20px; margin: 0 0 4px; color: var(--navy); }
+.subtitle { color: #6b7686; font-size: 13px; margin: 0 0 20px; }
+.login-card input { width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid var(--border); border-radius: 6px; }
+.login-card button { width: 100%; padding: 10px; background: var(--blue); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+.error { color: var(--red); font-size: 13px; min-height: 18px; }
+
+.topbar { background: var(--navy); color: white; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+.brand { font-weight: 600; }
+.topbar-right { display: flex; gap: 10px; align-items: center; }
+.topbar-right button { background: rgba(255,255,255,0.15); color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; }
+#user-badge { font-size: 13px; opacity: 0.85; margin-right: 8px; }
+
+.tabs { display: flex; gap: 4px; background: white; padding: 0 20px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.tab-btn { padding: 12px 16px; border: none; background: none; cursor: pointer; font-size: 14px; color: #6b7686; border-bottom: 2px solid transparent; white-space: nowrap; }
+.tab-btn.active { color: var(--blue); border-bottom-color: var(--blue); font-weight: 600; }
+
+.content { padding: 24px; max-width: 1400px; margin: 0 auto; }
+table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; font-size: 13px; }
+th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+th { background: #f0f3f7; font-weight: 600; position: sticky; top: 0; }
+tr:hover { background: #fafbfc; }
+td input, td select, td textarea { width: 100%; border: 1px solid transparent; background: transparent; padding: 4px; font-size: 13px; border-radius: 4px; }
+td input:hover, td select:hover, td textarea:hover { border-color: var(--border); }
+td input:focus, td select:focus, td textarea:focus { border-color: var(--blue); background: white; outline: none; }
+
+.status-pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.status-Done { background: #dcfce7; color: var(--green); }
+.status-OnTrack { background: #dbeafe; color: var(--blue); }
+.status-Delayed { background: #fee2e2; color: var(--red); }
+
+.card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.metric-card { background: white; padding: 16px; border-radius: 8px; border: 1px solid var(--border); }
+.metric-card .label { font-size: 12px; color: #6b7686; }
+.metric-card .value { font-size: 24px; font-weight: 700; color: var(--navy); }
+
+.email-box { background: white; padding: 20px; border-radius: 8px; white-space: pre-wrap; font-family: monospace; font-size: 13px; }
+.save-flash { position: fixed; bottom: 20px; right: 20px; background: var(--green); color: white; padding: 10px 16px; border-radius: 6px; opacity: 0; transition: opacity 0.3s; }
+.save-flash.show { opacity: 1; }
+button.add-btn { margin-bottom: 12px; background: var(--blue); color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; }

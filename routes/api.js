@@ -1,0 +1,200 @@
+const express = require('express');
+const ExcelJS = require('exceljs');
+
+module.exports = function (pool) {
+  const router = express.Router();
+
+  // ---------- helpers ----------
+  async function logChange(table, rowId, field, oldVal, newVal, user) {
+    if (String(oldVal ?? '') === String(newVal ?? '')) return;
+    await pool.query(
+      `INSERT INTO audit_log (table_name, row_id, field, old_value, new_value, changed_by)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [table, rowId, field, oldVal, newVal, user]
+    );
+  }
+
+  const TRACKER_EDITABLE_FIELDS = [
+    'estimates_actual', 'estimates_status',
+    'alignment_actual', 'alignment_status',
+    'so_actual', 'so_status',
+    'po_actual', 'po_status',
+    'invoice_actual', 'invoice_status',
+    'payment_actual', 'payment_status',
+    'blocker_note', 'next_action', 'action_owner', 'action_due'
+  ];
+
+  // ---------- Q3 Tracker (editable) ----------
+  router.get('/tracker', async (req, res) => {
+    const { rows } = await pool.query('SELECT * FROM tracker_rows ORDER BY country');
+    res.json(rows);
+  });
+
+  router.patch('/tracker/:id', async (req, res) => {
+    const id = req.params.id;
+    const updates = req.body; // { field: value, ... }
+    const fields = Object.keys(updates).filter(f => TRACKER_EDITABLE_FIELDS.includes(f));
+    if (fields.length === 0) return res.status(400).json({ error: 'No editable fields provided' });
+
+    const { rows: current } = await pool.query('SELECT * FROM tracker_rows WHERE id=$1', [id]);
+    if (!current.length) return res.status(404).json({ error: 'Row not found' });
+
+    const setClause = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
+    const values = fields.map(f => updates[f]);
+    values.push(id);
+
+    await pool.query(
+      `UPDATE tracker_rows SET ${setClause}, updated_at = now(), updated_by = $${values.length + 1} WHERE id = $${values.length}`,
+      [...values, req.session.userName]
+    );
+
+    for (const f of fields) {
+      await logChange('tracker_rows', id, f, current[0][f], updates[f], req.session.userName);
+    }
+    const { rows: updated } = await pool.query('SELECT * FROM tracker_rows WHERE id=$1', [id]);
+    res.json(updated[0]);
+  });
+
+  // ---------- Open Issues (editable) ----------
+  router.get('/issues', async (req, res) => {
+    const { rows } = await pool.query('SELECT * FROM open_issues ORDER BY issue_no');
+    res.json(rows);
+  });
+
+  router.patch('/issues/:id', async (req, res) => {
+    const id = req.params.id;
+    const allowed = ['issue', 'detail', 'owner', 'due_date', 'status'];
+    const fields = Object.keys(req.body).filter(f => allowed.includes(f));
+    if (fields.length === 0) return res.status(400).json({ error: 'No editable fields provided' });
+
+    const { rows: current } = await pool.query('SELECT * FROM open_issues WHERE id=$1', [id]);
+    if (!current.length) return res.status(404).json({ error: 'Not found' });
+
+    const setClause = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
+    const values = fields.map(f => req.body[f]);
+    values.push(id);
+    await pool.query(
+      `UPDATE open_issues SET ${setClause}, updated_at = now(), updated_by = $${values.length + 1} WHERE id = $${values.length}`,
+      [...values, req.session.userName]
+    );
+    for (const f of fields) await logChange('open_issues', id, f, current[0][f], req.body[f], req.session.userName);
+    const { rows: updated } = await pool.query('SELECT * FROM open_issues WHERE id=$1', [id]);
+    res.json(updated[0]);
+  });
+
+  router.post('/issues', async (req, res) => {
+    const { rows: maxRow } = await pool.query('SELECT COALESCE(MAX(issue_no),0)+1 AS n FROM open_issues');
+    const { issue, detail, owner, due_date, status } = req.body;
+    const { rows } = await pool.query(
+      `INSERT INTO open_issues (issue_no, issue, detail, owner, due_date, status)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [maxRow[0].n, issue, detail, owner, due_date || null, status || 'Open']
+    );
+    res.json(rows[0]);
+  });
+
+  // ---------- Read-only views ----------
+  router.get('/milestones', async (req, res) => {
+    const { rows } = await pool.query('SELECT * FROM milestone_calendar ORDER BY offset_days');
+    res.json(rows);
+  });
+
+  router.get('/carryover', async (req, res) => {
+    const { rows } = await pool.query('SELECT * FROM q2_carryover ORDER BY country');
+    res.json(rows);
+  });
+
+  router.get('/settings', async (req, res) => {
+    const { rows } = await pool.query('SELECT * FROM settings');
+    const obj = {};
+    rows.forEach(r => obj[r.key] = r.value);
+    res.json(obj);
+  });
+
+  // ---------- Dashboard (computed) ----------
+  router.get('/dashboard', async (req, res) => {
+    const { rows } = await pool.query('SELECT * FROM tracker_rows');
+    const stages = ['estimates', 'alignment', 'so', 'po', 'invoice', 'payment'];
+    const ragCounts = { Green: 0, Amber: 0, Red: 0 };
+    let totalValue = 0, countries = rows.length;
+    const stageStatus = {};
+    stages.forEach(s => stageStatus[s] = { Done: 0, 'On Track': 0, Delayed: 0 });
+
+    rows.forEach(r => {
+      totalValue += Number(r.q3_value || 0);
+      stages.forEach(s => {
+        const st = r[`${s}_status`] || 'On Track';
+        if (stageStatus[s][st] !== undefined) stageStatus[s][st]++;
+      });
+    });
+
+    res.json({ countries, totalValue, stageStatus, ragCounts });
+  });
+
+  // ---------- Weekly status email (auto-generated text) ----------
+  router.get('/weekly-email', async (req, res) => {
+    const { rows } = await pool.query('SELECT * FROM tracker_rows ORDER BY country');
+    const { rows: settingsRows } = await pool.query('SELECT * FROM settings');
+    const settings = {};
+    settingsRows.forEach(r => settings[r.key] = r.value);
+
+    const redFlags = rows.filter(r => [r.estimates_status, r.alignment_status, r.so_status, r.po_status, r.invoice_status, r.payment_status].includes('Delayed'));
+    const lines = [];
+    lines.push(`Subject: BDF || FAOne status || ${settings.quarter_label || ''} || week of ${new Date().toISOString().slice(0, 10)}`);
+    lines.push('');
+    lines.push('Hi Bruna, Saurabh,');
+    lines.push('');
+    lines.push(`Status across ${rows.length} countries as of ${settings.reporting_date || ''}.`);
+    if (redFlags.length) {
+      lines.push('');
+      lines.push('Countries needing attention:');
+      redFlags.forEach(r => lines.push(`- ${r.country}: ${r.blocker_note || 'delayed stage — see tracker'}`));
+    }
+    lines.push('');
+    lines.push('Full detail in the tracker.');
+    res.type('text/plain').send(lines.join('\n'));
+  });
+
+  // ---------- Excel export ----------
+  router.get('/export', async (req, res) => {
+    const wb = new ExcelJS.Workbook();
+    const { rows: tracker } = await pool.query('SELECT * FROM tracker_rows ORDER BY country');
+    const { rows: issues } = await pool.query('SELECT * FROM open_issues ORDER BY issue_no');
+    const { rows: carry } = await pool.query('SELECT * FROM q2_carryover ORDER BY country');
+
+    const ws = wb.addWorksheet('Q3 Tracker');
+    ws.addRow(['Country', 'Cluster', 'Q3 Value', 'FA Owner', 'BDF Owner',
+      'Estimates Plan', 'Estimates Actual', 'Estimates Status',
+      'Alignment Plan', 'Alignment Actual', 'Alignment Status',
+      'SO Plan', 'SO Actual', 'SO Status',
+      'PO Plan', 'PO Actual', 'PO Status',
+      'Invoice Plan', 'Invoice Actual', 'Invoice Status',
+      'Payment Plan', 'Payment Actual', 'Payment Status',
+      'Blocker/Note', 'Next Action', 'Action Owner', 'Action Due']);
+    tracker.forEach(r => ws.addRow([
+      r.country, r.cluster, r.q3_value, r.fa_owner, r.bdf_owner,
+      r.estimates_plan, r.estimates_actual, r.estimates_status,
+      r.alignment_plan, r.alignment_actual, r.alignment_status,
+      r.so_plan, r.so_actual, r.so_status,
+      r.po_plan, r.po_actual, r.po_status,
+      r.invoice_plan, r.invoice_actual, r.invoice_status,
+      r.payment_plan, r.payment_actual, r.payment_status,
+      r.blocker_note, r.next_action, r.action_owner, r.action_due
+    ]));
+
+    const wsIssues = wb.addWorksheet('Open Issues');
+    wsIssues.addRow(['#', 'Issue', 'Detail', 'Owner', 'Due', 'Status']);
+    issues.forEach(r => wsIssues.addRow([r.issue_no, r.issue, r.detail, r.owner, r.due_date, r.status]));
+
+    const wsCarry = wb.addWorksheet('Q2 Carry-over');
+    wsCarry.addRow(['Country', 'Q2 PO Status', 'Invoice Raised', 'Payment Received', 'Note', 'Owner', 'Due']);
+    carry.forEach(r => wsCarry.addRow([r.country, r.q2_po_status, r.invoice_raised, r.payment_received, r.note, r.owner, r.due_date]));
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=FAOne_BDF_Tracker_Export_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    await wb.xlsx.write(res);
+    res.end();
+  });
+
+  return router;
+};

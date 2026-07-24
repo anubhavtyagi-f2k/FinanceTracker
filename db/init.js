@@ -1,0 +1,96 @@
+// Run once (or safely re-run) to create tables and seed from the original
+// FAOne_BDF_Finance_Tracker.xlsx export. Usage: node db/init.js
+require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
+const { Pool } = require('pg');
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('railway') ? { rejectUnauthorized: false } : false
+});
+
+const seed = JSON.parse(fs.readFileSync(path.join(__dirname, 'seed_data.json'), 'utf8'));
+
+function d(v) {
+  if (!v) return null;
+  return v.slice(0, 10); // 'YYYY-MM-DD HH:MM:SS' -> 'YYYY-MM-DD'
+}
+
+async function main() {
+  const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+  await pool.query(schema);
+  console.log('Schema ensured.');
+
+  const { rows: existing } = await pool.query('SELECT COUNT(*)::int AS c FROM tracker_rows');
+  if (existing[0].c > 0) {
+    console.log('tracker_rows already has data — skipping seed. Delete rows manually if you want to reseed.');
+    await pool.end();
+    return;
+  }
+
+  for (const r of seed.tracker) {
+    await pool.query(
+      `INSERT INTO tracker_rows
+       (country, cluster, q3_value, fa_owner, bdf_owner,
+        estimates_plan, estimates_actual, estimates_status,
+        alignment_plan, alignment_actual, alignment_status,
+        so_plan, so_actual, so_status,
+        po_plan, po_actual, po_status,
+        invoice_plan, invoice_actual, invoice_status,
+        payment_plan, payment_actual, payment_status,
+        blocker_note, next_action, action_owner, action_due)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
+      [
+        r[0], r[1], r[2], r[3], r[4],
+        d(r[5]), d(r[6]), r[7],
+        d(r[8]), d(r[9]), r[10],
+        d(r[11]), d(r[12]), r[13],
+        d(r[14]), d(r[15]), r[16],
+        d(r[17]), d(r[18]), r[19],
+        d(r[20]), d(r[21]), r[22],
+        r[27], r[28], r[29], d(r[30])
+      ]
+    );
+  }
+  console.log(`Seeded ${seed.tracker.length} tracker rows.`);
+
+  for (const r of seed.issues) {
+    await pool.query(
+      `INSERT INTO open_issues (issue_no, issue, detail, owner, due_date, status)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [r[0], r[1], r[2], r[3], d(r[4]), r[5]]
+    );
+  }
+  console.log(`Seeded ${seed.issues.length} open issues.`);
+
+  for (const r of seed.carry) {
+    await pool.query(
+      `INSERT INTO q2_carryover (country, q2_po_status, invoice_raised, payment_received, note, owner, due_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [r[0], r[1], r[2], r[3], r[4], r[5], d(r[6])]
+    );
+  }
+  console.log(`Seeded ${seed.carry.length} Q2 carry-over rows.`);
+
+  const milestones = [
+    ['Estimates Shared', -15, 'Bruna Alvarenga (BDF) sends country-level calculations'],
+    ['Alignment Received', -7, 'Prem Anand (FA) reconciles vs agreement values, freezes numbers'],
+    ['SO Issued', 2, 'Anubhav Tyagi (FA) raises SO in ERP within 2 days of alignment'],
+    ['PO Received', 21, 'Prem Anand (FA) follows the local BDF team directly'],
+    ['Invoice Raised', 26, 'FA Finance invoices within 5 days of PO'],
+    ['Payment Received', 75, 'FA Finance chases per agreed payment terms']
+  ];
+  for (const [stage, offset, note] of milestones) {
+    await pool.query(`INSERT INTO milestone_calendar (stage, offset_days, note) VALUES ($1,$2,$3)`, [stage, offset, note]);
+  }
+  console.log('Seeded milestone calendar.');
+
+  await pool.query(`INSERT INTO settings (key, value) VALUES ('reporting_date', $1) ON CONFLICT (key) DO UPDATE SET value=$1`, ['2026-07-24']);
+  await pool.query(`INSERT INTO settings (key, value) VALUES ('quarter_label', $1) ON CONFLICT (key) DO UPDATE SET value=$1`, ['Q3 FY26 (JAS 26)']);
+
+  await pool.end();
+  console.log('Done.');
+}
+
+main().catch(e => { console.error(e); process.exit(1); });
