@@ -31,35 +31,23 @@ function fmtDate(v) {
 }
 
 // ---------- Session (auth disabled — always goes straight in) ----------
+let CURRENT_QUARTER = null;
+let QUARTERS = [];
+
 async function checkSession() {
   const res = await fetch('/api/session');
   const data = await res.json();
-  $('#login-screen').classList.add('hidden');
   $('#app').classList.remove('hidden');
   $('#user-badge').textContent = data.userName || '';
-  loadTab('tracker');
+  await loadQuarters();
+  loadTab('dashboard');
 }
 
-$('#login-btn').addEventListener('click', async () => {
-  const name = $('#login-name').value.trim();
-  const password = $('#login-password').value;
-  try {
-    const res = await fetch('/api/login', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, password })
-    });
-    if (!res.ok) throw new Error('Wrong password');
-    checkSession();
-  } catch (e) {
-    $('#login-error').textContent = 'Incorrect password. Contact your FieldAssist admin.';
-  }
-});
-$('#login-password').addEventListener('keydown', e => { if (e.key === 'Enter') $('#login-btn').click(); });
-
-$('#logout-btn').addEventListener('click', async () => {
-  await fetch('/api/logout', { method: 'POST' });
-  location.reload();
-});
+async function loadQuarters() {
+  QUARTERS = await (await api('/quarters')).json();
+  CURRENT_QUARTER = QUARTERS.find(q => q.is_current) || QUARTERS[QUARTERS.length - 1];
+  $('#quarter-badge').textContent = CURRENT_QUARTER ? CURRENT_QUARTER.label : '';
+}
 
 $('#export-btn').addEventListener('click', () => { window.location.href = '/api/export'; });
 
@@ -93,8 +81,16 @@ const STAGES = [
 ];
 
 async function renderTracker(content) {
-  const rows = await (await api('/tracker')).json();
-  let html = '<table><thead><tr><th>Country</th><th>FA Owner</th>';
+  const rows = await (await api(`/tracker?quarter_id=${CURRENT_QUARTER.id}`)).json();
+
+  let html = '<div class="quarter-form">';
+  html += `<div><label>Viewing quarter</label><select id="quarter-select">${QUARTERS.map(q => `<option value="${q.id}" ${q.id === CURRENT_QUARTER.id ? 'selected' : ''}>${q.label}</option>`).join('')}</select></div>`;
+  html += '<div><label>New quarter label</label><input id="new-q-label" placeholder="e.g. Q4 FY26 (OND 26)"></div>';
+  html += '<div><label>Start date</label><input id="new-q-start" type="date"></div>';
+  html += '<div><button class="add-btn" id="add-quarter-btn">+ Add Quarter</button></div>';
+  html += '</div>';
+
+  html += '<table><thead><tr><th>Country</th><th>FA Owner</th>';
   STAGES.forEach(([, label]) => html += `<th>${label} Actual</th><th>${label} Status</th>`);
   html += '<th>Blocker/Note</th><th>Next Action</th><th>Action Owner</th><th>Action Due</th></tr></thead><tbody>';
 
@@ -115,6 +111,24 @@ async function renderTracker(content) {
   html += '</tbody></table>';
   content.innerHTML = html;
 
+  $('#quarter-select').addEventListener('change', async (e) => {
+    CURRENT_QUARTER = QUARTERS.find(q => q.id == e.target.value);
+    $('#quarter-badge').textContent = CURRENT_QUARTER.label;
+    renderTracker(content);
+  });
+
+  $('#add-quarter-btn').addEventListener('click', async () => {
+    const label = $('#new-q-label').value.trim();
+    const start_date = $('#new-q-start').value;
+    if (!label || !start_date) { flash('Enter a label and start date'); return; }
+    try {
+      await api('/quarters', { method: 'POST', body: JSON.stringify({ label, start_date }) });
+      await loadQuarters();
+      flash('Quarter created');
+      renderTracker(content);
+    } catch (e) { flash('Failed: ' + e.message); }
+  });
+
   content.querySelectorAll('tr[data-id] [data-field]').forEach(el => {
     el.addEventListener('change', async () => {
       const id = el.closest('tr').dataset.id;
@@ -127,18 +141,73 @@ async function renderTracker(content) {
   });
 }
 
+let charts = {};
+function destroyCharts() { Object.values(charts).forEach(c => c.destroy()); charts = {}; }
+
 async function renderDashboard(content) {
-  const d = await (await api('/dashboard')).json();
+  const d = await (await api(`/dashboard?quarter_id=${CURRENT_QUARTER.id}`)).json();
+  destroyCharts();
+
   let html = '<div class="card-grid">';
   html += `<div class="metric-card"><div class="label">Countries in scope</div><div class="value">${d.countries}</div></div>`;
   html += `<div class="metric-card"><div class="label">Total Q3 Value</div><div class="value">${d.totalValue.toLocaleString()}</div></div>`;
-  html += '</div><table><thead><tr><th>Stage</th><th>Done</th><th>On Track</th><th>Delayed</th></tr></thead><tbody>';
-  STAGES.forEach(([key, label]) => {
-    const s = d.stageStatus[key];
-    html += `<tr><td>${label}</td><td>${s.Done}</td><td>${s['On Track']}</td><td>${s.Delayed}</td></tr>`;
-  });
-  html += '</tbody></table>';
+  html += `<div class="metric-card"><div class="label">PO Received vs Expected</div><div class="value">${d.po.received}/${d.po.expected}</div></div>`;
+  html += `<div class="metric-card"><div class="label">SO Issued vs Expected</div><div class="value">${d.so.received}/${d.so.expected}</div></div>`;
+  html += '</div>';
+
+  html += '<div class="chart-grid">';
+  html += '<div class="chart-card"><h3>PO Received vs Expected</h3><canvas id="po-chart"></canvas></div>';
+  html += '<div class="chart-card"><h3>SO Issued vs Expected</h3><canvas id="so-chart"></canvas></div>';
+  html += '<div class="chart-card"><h3>Pipeline Status by Stage</h3><canvas id="stage-chart"></canvas></div>';
+  html += '</div>';
+
+  html += '<div class="chart-card"><h3>Deadlines in the next 7 days</h3><div class="deadline-list" id="deadline-list"></div></div>';
+
   content.innerHTML = html;
+
+  const nivea = '#0032A0', green = '#16a34a', amber = '#d97706', red = '#dc2626', grey = '#dde3ee';
+
+  charts.po = new Chart($('#po-chart'), {
+    type: 'pie',
+    data: {
+      labels: ['Received', 'Outstanding'],
+      datasets: [{ data: [d.po.received, Math.max(d.po.expected - d.po.received, 0)], backgroundColor: [nivea, grey] }]
+    },
+    options: { plugins: { legend: { position: 'bottom' } } }
+  });
+
+  charts.so = new Chart($('#so-chart'), {
+    type: 'pie',
+    data: {
+      labels: ['Issued', 'Outstanding'],
+      datasets: [{ data: [d.so.received, Math.max(d.so.expected - d.so.received, 0)], backgroundColor: [nivea, grey] }]
+    },
+    options: { plugins: { legend: { position: 'bottom' } } }
+  });
+
+  charts.stage = new Chart($('#stage-chart'), {
+    type: 'bar',
+    data: {
+      labels: STAGES.map(s => s[1]),
+      datasets: [
+        { label: 'Done', data: STAGES.map(s => d.stageStatus[s[0]].Done), backgroundColor: green },
+        { label: 'On Track', data: STAGES.map(s => d.stageStatus[s[0]]['On Track']), backgroundColor: nivea },
+        { label: 'Delayed', data: STAGES.map(s => d.stageStatus[s[0]].Delayed), backgroundColor: red }
+      ]
+    },
+    options: { responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }, plugins: { legend: { position: 'bottom' } } }
+  });
+
+  const list = $('#deadline-list');
+  if (d.deadlines.length === 0) {
+    list.innerHTML = '<div class="deadline-row">No deadlines in the next 7 days.</div>';
+  } else {
+    list.innerHTML = d.deadlines.map(dl => {
+      const cls = dl.daysOut < 0 ? 'days-red' : dl.daysOut <= 2 ? 'days-amber' : 'days-green';
+      const label = dl.daysOut < 0 ? `${Math.abs(dl.daysOut)}d overdue` : dl.daysOut === 0 ? 'Today' : `${dl.daysOut}d left`;
+      return `<div class="deadline-row"><span><strong>${dl.country}</strong> — ${dl.action || 'Action pending'} (${dl.owner || 'Unassigned'})</span><span class="days-out ${cls}">${label}</span></div>`;
+    }).join('');
+  }
 }
 
 async function renderMilestones(content) {

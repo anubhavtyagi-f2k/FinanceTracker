@@ -2,36 +2,29 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>FAOne — BDF Q3 Tracker</title>
+<title>FAOne — BDF Tracker</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="stylesheet" href="/styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
 <body>
 
-<div id="login-screen" class="login-screen">
-  <div class="login-card">
-    <h1>FAOne — BDF Tracker</h1>
-    <p class="subtitle">FieldAssist team access only</p>
-    <input id="login-name" type="text" placeholder="Your name" />
-    <input id="login-password" type="password" placeholder="Password" />
-    <button id="login-btn">Enter</button>
-    <p id="login-error" class="error"></p>
-  </div>
-</div>
-
 <div id="app" class="app hidden">
   <header class="topbar">
-    <div class="brand">FAOne — BDF Q3 (JAS 26) Tracker</div>
+    <div class="brand">
+      <span class="brand-mark">NIVEA</span>
+      <span class="brand-sub">FAOne — BDF Tracker</span>
+    </div>
     <div class="topbar-right">
+      <span id="quarter-badge"></span>
       <span id="user-badge"></span>
       <button id="export-btn">Export to Excel</button>
-      <button id="logout-btn">Log out</button>
     </div>
   </header>
 
   <nav class="tabs">
-    <button class="tab-btn active" data-tab="tracker">Q3 Tracker</button>
-    <button class="tab-btn" data-tab="dashboard">Dashboard</button>
+    <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+    <button class="tab-btn" data-tab="tracker">Q3 Tracker</button>
     <button class="tab-btn" data-tab="milestones">Milestone Calendar</button>
     <button class="tab-btn" data-tab="email">Weekly Status Email</button>
     <button class="tab-btn" data-tab="carryover">Q2 Carry-over</button>

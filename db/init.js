@@ -25,6 +25,24 @@ async function main() {
   await pool.query(schema);
   console.log('Schema ensured.');
 
+  // Ensure the current quarter exists (handles both fresh installs and
+  // pre-existing databases that predate multi-quarter support)
+  let { rows: currentQ } = await pool.query('SELECT * FROM quarters WHERE is_current = true LIMIT 1');
+  let quarterId;
+  if (currentQ.length === 0) {
+    const { rows: inserted } = await pool.query(
+      `INSERT INTO quarters (label, start_date, is_current) VALUES ($1,$2,true) RETURNING id`,
+      ['Q3 FY26 (JAS 26)', '2026-07-01']
+    );
+    quarterId = inserted[0].id;
+    console.log('Created initial quarter record.');
+  } else {
+    quarterId = currentQ[0].id;
+  }
+
+  // Backfill any existing tracker rows that predate quarter_id
+  await pool.query('UPDATE tracker_rows SET quarter_id = $1 WHERE quarter_id IS NULL', [quarterId]);
+
   const { rows: existing } = await pool.query('SELECT COUNT(*)::int AS c FROM tracker_rows');
   if (existing[0].c > 0) {
     console.log('tracker_rows already has data — skipping seed. Delete rows manually if you want to reseed.');
@@ -35,7 +53,7 @@ async function main() {
   for (const r of seed.tracker) {
     await pool.query(
       `INSERT INTO tracker_rows
-       (country, cluster, q3_value, fa_owner, bdf_owner,
+       (quarter_id, country, cluster, q3_value, fa_owner, bdf_owner,
         estimates_plan, estimates_actual, estimates_status,
         alignment_plan, alignment_actual, alignment_status,
         so_plan, so_actual, so_status,
@@ -43,8 +61,9 @@ async function main() {
         invoice_plan, invoice_actual, invoice_status,
         payment_plan, payment_actual, payment_status,
         blocker_note, next_action, action_owner, action_due)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
       [
+        quarterId,
         r[0], r[1], r[2], r[3], r[4],
         d(r[5]), d(r[6]), r[7],
         d(r[8]), d(r[9]), r[10],

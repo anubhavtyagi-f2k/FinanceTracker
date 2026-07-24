@@ -2,8 +2,17 @@
 -- Mirrors the original Excel tabs. "Plan" dates come from Milestone Calendar
 -- offsets; "Actual" dates + notes are the only things users edit day-to-day.
 
+CREATE TABLE IF NOT EXISTS quarters (
+  id SERIAL PRIMARY KEY,
+  label TEXT NOT NULL,          -- e.g. 'Q3 FY26 (JAS 26)'
+  start_date DATE NOT NULL,
+  is_current BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS tracker_rows (
   id SERIAL PRIMARY KEY,
+  quarter_id INTEGER REFERENCES quarters(id),
   country TEXT NOT NULL,
   cluster TEXT,
   q3_value NUMERIC,
@@ -42,6 +51,10 @@ CREATE TABLE IF NOT EXISTS tracker_rows (
   updated_at TIMESTAMPTZ DEFAULT now(),
   updated_by TEXT
 );
+
+-- Migration-safe: adds quarter_id to a tracker_rows table that may already
+-- exist from before multi-quarter support was introduced.
+ALTER TABLE tracker_rows ADD COLUMN IF NOT EXISTS quarter_id INTEGER REFERENCES quarters(id);
 
 CREATE TABLE IF NOT EXISTS milestone_calendar (
   id SERIAL PRIMARY KEY,

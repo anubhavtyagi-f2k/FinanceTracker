@@ -24,10 +24,72 @@ module.exports = function (pool) {
     'blocker_note', 'next_action', 'action_owner', 'action_due'
   ];
 
+  // ---------- Quarters ----------
+  router.get('/quarters', async (req, res) => {
+    const { rows } = await pool.query('SELECT * FROM quarters ORDER BY start_date');
+    res.json(rows);
+  });
+
+  router.post('/quarters', async (req, res) => {
+    const { label, start_date } = req.body;
+    if (!label || !start_date) return res.status(400).json({ error: 'label and start_date are required' });
+
+    const { rows: milestones } = await pool.query('SELECT * FROM milestone_calendar');
+    const offsetFor = stage => {
+      const m = milestones.find(m => m.stage.toLowerCase().startsWith(stage));
+      return m ? m.offset_days : 0;
+    };
+    const addDays = (dateStr, days) => {
+      const d = new Date(dateStr);
+      d.setDate(d.getDate() + days);
+      return d.toISOString().slice(0, 10);
+    };
+
+    await pool.query('UPDATE quarters SET is_current = false');
+    const { rows: qInsert } = await pool.query(
+      `INSERT INTO quarters (label, start_date, is_current) VALUES ($1,$2,true) RETURNING *`,
+      [label, start_date]
+    );
+    const quarterId = qInsert[0].id;
+
+    // Carry forward the country/owner list from the most recent quarter,
+    // with fresh plan dates from the milestone cadence and blank actuals.
+    const { rows: prevRows } = await pool.query(
+      `SELECT * FROM tracker_rows WHERE quarter_id = (
+         SELECT id FROM quarters WHERE id != $1 ORDER BY start_date DESC LIMIT 1
+       )`, [quarterId]
+    );
+
+    for (const r of prevRows) {
+      await pool.query(
+        `INSERT INTO tracker_rows
+         (quarter_id, country, cluster, q3_value, fa_owner, bdf_owner,
+          estimates_plan, estimates_status, alignment_plan, alignment_status,
+          so_plan, so_status, po_plan, po_status, invoice_plan, invoice_status,
+          payment_plan, payment_status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'On Track',$8,'On Track',$9,'On Track',$10,'On Track',$11,'On Track',$12,'On Track')`,
+        [
+          quarterId, r.country, r.cluster, r.q3_value, r.fa_owner, r.bdf_owner,
+          addDays(start_date, offsetFor('estimates')),
+          addDays(start_date, offsetFor('alignment')),
+          addDays(start_date, offsetFor('so')),
+          addDays(start_date, offsetFor('po')),
+          addDays(start_date, offsetFor('invoice')),
+          addDays(start_date, offsetFor('payment'))
+        ]
+      );
+    }
+
+    res.json({ ...qInsert[0], rowsCreated: prevRows.length });
+  });
+
   // ---------- Q3 Tracker (editable) ----------
   router.get('/tracker', async (req, res) => {
-    const { rows } = await pool.query('SELECT * FROM tracker_rows ORDER BY country');
-    res.json(rows);
+    const quarterId = req.query.quarter_id;
+    const q = quarterId
+      ? await pool.query('SELECT * FROM tracker_rows WHERE quarter_id = $1 ORDER BY country', [quarterId])
+      : await pool.query(`SELECT * FROM tracker_rows WHERE quarter_id = (SELECT id FROM quarters WHERE is_current = true LIMIT 1) ORDER BY country`);
+    res.json(q.rows);
   });
 
   router.patch('/tracker/:id', async (req, res) => {
@@ -113,12 +175,22 @@ module.exports = function (pool) {
 
   // ---------- Dashboard (computed) ----------
   router.get('/dashboard', async (req, res) => {
-    const { rows } = await pool.query('SELECT * FROM tracker_rows');
+    const quarterId = req.query.quarter_id;
+    const { rows } = quarterId
+      ? await pool.query('SELECT * FROM tracker_rows WHERE quarter_id = $1', [quarterId])
+      : await pool.query(`SELECT * FROM tracker_rows WHERE quarter_id = (SELECT id FROM quarters WHERE is_current = true LIMIT 1)`);
+
+    const { rows: qRows } = await pool.query('SELECT * FROM quarters WHERE is_current = true LIMIT 1');
+    const today = new Date();
+
     const stages = ['estimates', 'alignment', 'so', 'po', 'invoice', 'payment'];
-    const ragCounts = { Green: 0, Amber: 0, Red: 0 };
-    let totalValue = 0, countries = rows.length;
     const stageStatus = {};
     stages.forEach(s => stageStatus[s] = { Done: 0, 'On Track': 0, Delayed: 0 });
+
+    let totalValue = 0;
+    // "Expected by now" = plan date has passed (or today); "Received" = actual is filled in
+    let soExpected = 0, soReceived = 0, poExpected = 0, poReceived = 0;
+    const deadlines = [];
 
     rows.forEach(r => {
       totalValue += Number(r.q3_value || 0);
@@ -126,9 +198,41 @@ module.exports = function (pool) {
         const st = r[`${s}_status`] || 'On Track';
         if (stageStatus[s][st] !== undefined) stageStatus[s][st]++;
       });
+
+      if (r.so_plan && new Date(r.so_plan) <= today) {
+        soExpected++;
+        if (r.so_actual) soReceived++;
+      }
+      if (r.po_plan && new Date(r.po_plan) <= today) {
+        poExpected++;
+        if (r.po_actual) poReceived++;
+      }
+
+      if (r.action_due) {
+        const daysOut = Math.ceil((new Date(r.action_due) - today) / 86400000);
+        if (daysOut <= 7) {
+          deadlines.push({
+            country: r.country,
+            action: r.next_action,
+            owner: r.action_owner,
+            due: r.action_due,
+            daysOut
+          });
+        }
+      }
     });
 
-    res.json({ countries, totalValue, stageStatus, ragCounts });
+    deadlines.sort((a, b) => a.daysOut - b.daysOut);
+
+    res.json({
+      countries: rows.length,
+      totalValue,
+      stageStatus,
+      po: { expected: poExpected, received: poReceived },
+      so: { expected: soExpected, received: soReceived },
+      deadlines,
+      quarterLabel: qRows[0] ? qRows[0].label : ''
+    });
   });
 
   // ---------- Weekly status email (auto-generated text) ----------
@@ -158,7 +262,7 @@ module.exports = function (pool) {
   // ---------- Excel export ----------
   router.get('/export', async (req, res) => {
     const wb = new ExcelJS.Workbook();
-    const { rows: tracker } = await pool.query('SELECT * FROM tracker_rows ORDER BY country');
+    const { rows: tracker } = await pool.query(`SELECT * FROM tracker_rows WHERE quarter_id = (SELECT id FROM quarters WHERE is_current = true LIMIT 1) ORDER BY country`);
     const { rows: issues } = await pool.query('SELECT * FROM open_issues ORDER BY issue_no');
     const { rows: carry } = await pool.query('SELECT * FROM q2_carryover ORDER BY country');
 
