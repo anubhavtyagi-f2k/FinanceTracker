@@ -184,9 +184,18 @@ module.exports = function (pool) {
 
   router.patch('/po-log/:id', async (req, res) => {
     const id = req.params.id;
-    const allowed = ['tracker_row_id', 'country', 'po_number', 'amount', 'currency_code', 'date_raised', 'date_received', 'status', 'note'];
+    const allowed = ['tracker_row_id', 'country', 'po_number', 'amount', 'currency_code', 'date_raised', 'date_received', 'status', 'note', 'is_placeholder'];
     const fields = Object.keys(req.body).filter(f => allowed.includes(f));
     if (fields.length === 0) return res.status(400).json({ error: 'No editable fields provided' });
+
+    // Editing the real identifying fields is treated as confirming the entry
+    // is no longer a placeholder, unless is_placeholder was explicitly set.
+    const confirmingFields = ['po_number', 'amount', 'currency_code'];
+    if (!fields.includes('is_placeholder') && fields.some(f => confirmingFields.includes(f))) {
+      fields.push('is_placeholder');
+      req.body.is_placeholder = false;
+    }
+
     const setClause = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
     const values = fields.map(f => req.body[f]);
     values.push(id);
@@ -470,7 +479,9 @@ module.exports = function (pool) {
     let oneTimeTotalUsd = 0;
     oneTimeRows.forEach(o => { oneTimeTotalUsd += toUsd(o.amount, o.currency_code); });
 
-    const { rows: poRows } = await pool.query(`SELECT * FROM po_log WHERE ${currentQFilter.clause}`, currentQFilter.params);
+    const { rows: poRowsAll } = await pool.query(`SELECT * FROM po_log WHERE ${currentQFilter.clause}`, currentQFilter.params);
+    const poRows = poRowsAll.filter(p => !p.is_placeholder);
+    const placeholderCount = poRowsAll.length - poRows.length;
     const poStatusCounts = { Awaiting: 0, Raised: 0, Received: 0, Overdue: 0 };
     let poTotalUsd = 0;
     poRows.forEach(p => {
@@ -491,7 +502,8 @@ module.exports = function (pool) {
         subscriptionTotalUsd,
         oneTimeTotalUsd,
         poTotalUsd,
-        poStatusCounts
+        poStatusCounts,
+        placeholderCount
       }
     });
   });

@@ -381,14 +381,19 @@ async function renderPoTracker(content) {
     (await api(`/tracker?quarter_id=${CURRENT_QUARTER.id}`)).json()
   ]);
 
+  const realRows = rows.filter(r => !r.is_placeholder);
+  const placeholderRows = rows.filter(r => r.is_placeholder);
   const statusCounts = { Awaiting: 0, Raised: 0, Received: 0, Overdue: 0 };
-  rows.forEach(r => { if (statusCounts[r.status] !== undefined) statusCounts[r.status]++; });
+  realRows.forEach(r => { if (statusCounts[r.status] !== undefined) statusCounts[r.status]++; });
 
   let html = '<div class="card-grid">';
   Object.entries(statusCounts).forEach(([status, count]) => {
     html += `<div class="metric-card"><div class="icon">▤</div><div><div class="label">${status}</div><div class="value">${count}</div></div></div>`;
   });
   html += '</div>';
+  if (placeholderRows.length) {
+    html += `<p style="color:#6b7686;font-size:13px;margin-top:-8px">${placeholderRows.length} entr${placeholderRows.length === 1 ? 'y is' : 'ies are'} still placeholder data (shown with a badge below) and excluded from the counts above and from Dashboard totals.</p>`;
+  }
 
   html += '<div class="quarter-form">';
   html += `<div><label>Country</label><select id="new-po-country">${trackerRows.map(t => `<option value="${t.country}" data-row="${t.id}">${t.country}</option>`).join('')}</select></div>`;
@@ -400,7 +405,7 @@ async function renderPoTracker(content) {
 
   html += '<div class="table-scroll"><table><thead><tr><th>Country</th><th>PO Number</th><th>Amount</th><th>Currency</th><th>Date Raised</th><th>Date Received</th><th>Status</th><th>Note</th><th></th></tr></thead><tbody>';
   rows.forEach(r => {
-    html += `<tr data-id="${r.id}"><td>${r.country || ''}</td>`;
+    html += `<tr data-id="${r.id}" style="${r.is_placeholder ? 'background:#fffbeb' : ''}"><td>${r.country || ''} ${r.is_placeholder ? '<span class="status-pill status-OnTrack" style="background:#fef3c7;color:#d97706">Placeholder</span>' : ''}</td>`;
     html += `<td><input type="text" data-field="po_number" value="${r.po_number || ''}"></td>`;
     html += `<td><input type="number" data-field="amount" value="${r.amount || ''}"></td>`;
     html += `<td><input type="text" data-field="currency_code" value="${r.currency_code || 'USD'}" style="width:60px"></td>`;
@@ -433,7 +438,7 @@ async function renderPoTracker(content) {
       try {
         await api(`/po-log/${id}`, { method: 'PATCH', body: JSON.stringify({ [el.dataset.field]: el.value }) });
         flash('Saved');
-        if (el.dataset.field === 'status') renderPoTracker(content);
+        if (['status', 'po_number', 'amount', 'currency_code'].includes(el.dataset.field)) renderPoTracker(content);
       } catch (e) { flash('Save failed: ' + e.message); }
     });
   });
@@ -686,7 +691,7 @@ async function renderCountryView(content) {
     const myCarry = carryover.filter(r => r.country === country);
 
     const ragColor = t.rag === 'Green' ? 'status-Done' : t.rag === 'Amber' ? 'status-OnTrack' : 'status-Delayed';
-    const poTotal = myPo.reduce((s, r) => s + Number(r.amount || 0), 0);
+    const poTotal = myPo.filter(r => !r.is_placeholder).reduce((s, r) => s + Number(r.amount || 0), 0);
     const otTotal = myOt.reduce((s, r) => s + Number(r.amount || 0), 0);
     const userCount = myUc.reduce((s, r) => s + Number(r.user_count || 0), 0);
     const subCharge = rate ? userCount * Number(rate.per_user_price || 0) : 0;
@@ -714,7 +719,7 @@ async function renderCountryView(content) {
     b += '<h3 style="margin-top:24px">PO Log entries</h3>';
     b += myPo.length
       ? '<div class="table-scroll"><table><thead><tr><th>PO Number</th><th>Amount</th><th>Currency</th><th>Date Raised</th><th>Date Received</th><th>Status</th></tr></thead><tbody>' +
-        myPo.map(r => `<tr><td>${r.po_number || ''}</td><td>${r.amount || ''}</td><td>${r.currency_code}</td><td>${fmtDate(r.date_raised)}</td><td>${fmtDate(r.date_received)}</td><td>${r.status}</td></tr>`).join('') +
+        myPo.map(r => `<tr${r.is_placeholder ? ' style="background:#fffbeb"' : ''}><td>${r.po_number || ''} ${r.is_placeholder ? '<span class="status-pill" style="background:#fef3c7;color:#d97706">Placeholder</span>' : ''}</td><td>${r.amount || ''}</td><td>${r.currency_code}</td><td>${fmtDate(r.date_raised)}</td><td>${fmtDate(r.date_received)}</td><td>${r.status}</td></tr>`).join('') +
         '</tbody></table></div>'
       : '<p>No PO log entries for this country.</p>';
 

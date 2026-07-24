@@ -38,8 +38,8 @@ async function main() {
   for (const r of tracker) {
     const status = mapStatus(r.po_status, r.po_plan, r.po_actual);
     await pool.query(
-      `INSERT INTO po_log (tracker_row_id, quarter_id, country, po_number, amount, currency_code, date_raised, date_received, status, note, updated_by)
-       VALUES ($1,$2,$3,$4,$5,'USD',$6,$7,$8,$9,'backfill script')`,
+      `INSERT INTO po_log (tracker_row_id, quarter_id, country, po_number, amount, currency_code, date_raised, date_received, status, note, is_placeholder, updated_by)
+       VALUES ($1,$2,$3,$4,$5,'USD',$6,$7,$8,$9,true,'backfill script')`,
       [r.id, quarterId, r.country, `${r.country}-Q3-PO`, r.q3_value, r.po_plan, r.po_actual, status, 'Backfilled from Q3 Tracker Q3 Value — confirm PO number and currency']
     );
     count++;

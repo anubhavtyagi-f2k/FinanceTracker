@@ -127,9 +127,12 @@ CREATE TABLE IF NOT EXISTS po_log (
   date_received DATE,
   status TEXT DEFAULT 'Awaiting',   -- Awaiting / Raised / Received / Overdue
   note TEXT,
+  is_placeholder BOOLEAN DEFAULT false,  -- true = backfilled stand-in data, excluded from billing totals
   updated_at TIMESTAMPTZ DEFAULT now(),
   updated_by TEXT
 );
+
+ALTER TABLE po_log ADD COLUMN IF NOT EXISTS is_placeholder BOOLEAN DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS user_counts (
   id SERIAL PRIMARY KEY,

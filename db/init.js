@@ -68,6 +68,9 @@ async function main() {
   }
   console.log('Backfilled Awaiting Step / Current Step Due / Days Late / RAG onto existing rows.');
 
+  await pool.query(`UPDATE po_log SET is_placeholder = true WHERE note LIKE 'Backfilled from Q3 Tracker%' AND is_placeholder IS NOT true`);
+  console.log('Marked existing backfilled PO entries as placeholders.');
+
   const { rows: existing } = await pool.query('SELECT COUNT(*)::int AS c FROM tracker_rows');
   if (existing[0].c > 0) {
     console.log('tracker_rows already has data — skipping seed. Delete rows manually if you want to reseed.');
