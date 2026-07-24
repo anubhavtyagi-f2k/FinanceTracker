@@ -27,19 +27,14 @@ function fmtDate(v) {
   return String(v).slice(0, 10);
 }
 
-// ---------- Auth ----------
+// ---------- Session (auth disabled — always goes straight in) ----------
 async function checkSession() {
   const res = await fetch('/api/session');
   const data = await res.json();
-  if (data.authed) {
-    $('#login-screen').classList.add('hidden');
-    $('#app').classList.remove('hidden');
-    $('#user-badge').textContent = data.userName;
-    loadTab('tracker');
-  } else {
-    $('#login-screen').classList.remove('hidden');
-    $('#app').classList.add('hidden');
-  }
+  $('#login-screen').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  $('#user-badge').textContent = data.userName || '';
+  loadTab('tracker');
 }
 
 $('#login-btn').addEventListener('click', async () => {

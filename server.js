@@ -21,20 +21,17 @@ app.use(session({
   cookie: { maxAge: 1000 * 60 * 60 * 24 * 14, httpOnly: true, secure: process.env.NODE_ENV === 'production' }
 }));
 
-// ---- Auth: single shared password gate ----
+// ---- Auth disabled: app is open to anyone with the link ----
 function requireAuth(req, res, next) {
-  if (req.session && req.session.authed) return next();
-  return res.status(401).json({ error: 'Not authenticated' });
+  req.session.authed = true;
+  req.session.userName = req.session.userName || 'FieldAssist user';
+  next();
 }
 
 app.post('/api/login', (req, res) => {
-  const { password, name } = req.body;
-  if (password && password === process.env.APP_PASSWORD) {
-    req.session.authed = true;
-    req.session.userName = (name || 'FieldAssist user').trim();
-    return res.json({ ok: true });
-  }
-  return res.status(401).json({ error: 'Wrong password' });
+  req.session.authed = true;
+  req.session.userName = (req.body.name || 'FieldAssist user').trim();
+  res.json({ ok: true });
 });
 
 app.post('/api/logout', (req, res) => {
