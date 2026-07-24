@@ -118,12 +118,13 @@ async function renderTracker(content) {
   html += '<div><button class="add-btn" id="add-country-btn">+ Add Country</button></div>';
   html += '</div>';
 
-  html += '<div class="table-scroll"><table><thead><tr><th>Country</th><th>FA Owner</th><th>RAG</th><th>Awaiting Step</th><th>Days Late</th>';
+  html += '<div class="table-scroll"><table><thead><tr><th>Country</th><th>FA Owner</th><th>Q3 Value</th><th>RAG</th><th>Awaiting Step</th><th>Days Late</th>';
   STAGES.forEach(([, label]) => html += `<th>${label} Actual</th><th>${label} Status</th>`);
   html += '<th>Blocker/Note</th><th>Next Action</th><th>Action Owner</th><th>Action Due</th><th></th></tr></thead><tbody>';
 
   rows.forEach(r => {
     html += `<tr data-id="${r.id}"><td>${r.country}</td><td>${r.fa_owner || ''}</td>`;
+    html += `<td><input type="number" data-field="q3_value" value="${r.q3_value || 0}" style="width:100px"></td>`;
     html += `<td><select data-field="rag">${['Green', 'Amber', 'Red'].map(c => `<option ${r.rag === c ? 'selected' : ''}>${c}</option>`).join('')}</select></td>`;
     html += `<td><input type="text" data-field="awaiting_step" value="${r.awaiting_step || ''}"></td>`;
     html += `<td><input type="number" data-field="days_late" value="${r.days_late ?? 0}" style="width:60px"></td>`;
@@ -204,7 +205,7 @@ async function renderDashboard(content) {
 
   let html = '<div class="card-grid">';
   html += `<div class="metric-card"><div class="icon">🌍</div><div><div class="label">Countries in scope</div><div class="value">${d.countries}</div></div></div>`;
-  html += `<div class="metric-card accent-green"><div class="icon">💰</div><div><div class="label">Total Q3 Value</div><div class="value">${d.totalValue.toLocaleString()}</div></div></div>`;
+  html += `<div class="metric-card accent-green"><div class="icon">💰</div><div><div class="label">Total Quarter Value (USD)</div><div class="value">$${d.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div></div></div>`;
   html += `<div class="metric-card"><div class="icon">📦</div><div><div class="label">PO Received vs Expected</div><div class="value">${d.po.received}/${d.po.expected}</div></div></div>`;
   html += `<div class="metric-card accent-amber"><div class="icon">📄</div><div><div class="label">SO Issued vs Expected</div><div class="value">${d.so.received}/${d.so.expected}</div></div></div>`;
   html += '</div>';

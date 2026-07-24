@@ -15,6 +15,7 @@ module.exports = function (pool) {
   }
 
   const TRACKER_EDITABLE_FIELDS = [
+    'q3_value',
     'estimates_actual', 'estimates_status',
     'alignment_actual', 'alignment_status',
     'so_actual', 'so_status',
@@ -452,14 +453,12 @@ module.exports = function (pool) {
     const stageStatus = {};
     stages.forEach(s => stageStatus[s] = { Done: 0, 'On Track': 0, Delayed: 0 });
 
-    let totalValue = 0;
     // "Expected by now" = plan date has passed (or today); "Received" = actual is filled in
     let soExpected = 0, soReceived = 0, poExpected = 0, poReceived = 0;
     const deadlines = [];
     const ragCounts = { Green: 0, Amber: 0, Red: 0 };
 
     rows.forEach(r => {
-      totalValue += Number(r.q3_value || 0);
       stages.forEach(s => {
         const st = r[`${s}_status`] || 'On Track';
         if (stageStatus[s][st] !== undefined) stageStatus[s][st]++;
@@ -513,6 +512,15 @@ module.exports = function (pool) {
     const { rows: oneTimeRows } = await pool.query(`SELECT * FROM one_time_support WHERE ${currentQFilter.clause}`, currentQFilter.params);
     let oneTimeTotalUsd = 0;
     oneTimeRows.forEach(o => { oneTimeTotalUsd += toUsd(o.amount, o.currency_code); });
+
+    // Carry-forward is stored on tracker_rows per country, in that country's native currency
+    let carryForwardTotalUsd = 0;
+    rows.forEach(r => {
+      const rate = rateByCountry[r.country];
+      carryForwardTotalUsd += toUsd(r.carry_forward_amount, rate ? rate.currency_code : 'USD');
+    });
+
+    const totalValue = subscriptionTotalUsd + oneTimeTotalUsd + carryForwardTotalUsd;
 
     const { rows: poRowsAll } = await pool.query(`SELECT * FROM po_log WHERE ${currentQFilter.clause}`, currentQFilter.params);
     const poRows = poRowsAll.filter(p => !p.is_placeholder);
