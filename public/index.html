@@ -10,27 +10,39 @@
 <body>
 
 <div id="app" class="app hidden">
-  <header class="topbar">
-    <div class="brand">
+  <aside class="sidebar">
+    <div class="sidebar-brand">
       <span class="brand-mark">NIVEA</span>
-      <span class="brand-sub">FAOne — BDF Tracker</span>
+      <span class="brand-sub">Billing &amp; Tracker Console</span>
     </div>
-    <div class="topbar-right">
-      <span id="quarter-badge"></span>
-      <span id="user-badge"></span>
-      <button id="export-btn">Export to Excel</button>
-    </div>
-  </header>
+    <nav class="side-nav">
+      <button class="side-btn active" data-tab="dashboard"><span class="side-icon">◧</span> Dashboard</button>
+      <button class="side-btn" data-tab="tracker"><span class="side-icon">☰</span> Q3 Tracker</button>
+      <button class="side-btn" data-tab="po-tracker"><span class="side-icon">▤</span> PO Tracker</button>
+      <button class="side-btn" data-tab="user-counts"><span class="side-icon">◈</span> User Counts</button>
+      <button class="side-btn" data-tab="one-time"><span class="side-icon">◇</span> One-time &amp; Support</button>
+      <button class="side-btn" data-tab="milestones"><span class="side-icon">◔</span> Milestone Calendar</button>
+      <button class="side-btn" data-tab="carryover"><span class="side-icon">↺</span> Q2 Carry-over</button>
+      <button class="side-btn" data-tab="issues"><span class="side-icon">⚑</span> Open Issues</button>
+      <button class="side-btn" data-tab="settings"><span class="side-icon">⚙</span> Settings</button>
+    </nav>
+  </aside>
 
-  <nav class="tabs">
-    <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
-    <button class="tab-btn" data-tab="tracker">Q3 Tracker</button>
-    <button class="tab-btn" data-tab="milestones">Milestone Calendar</button>
-    <button class="tab-btn" data-tab="carryover">Q2 Carry-over</button>
-    <button class="tab-btn" data-tab="issues">Open Issues</button>
-  </nav>
+  <div class="main-col">
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1 id="page-title">Dashboard</h1>
+        <p id="page-subtitle">Beiersdorf × FieldAssist — FAOne billing snapshot &amp; KPIs</p>
+      </div>
+      <div class="topbar-right">
+        <span id="quarter-badge"></span>
+        <span id="user-badge"></span>
+        <button id="export-btn">⬇ Export to Excel</button>
+      </div>
+    </header>
 
-  <main id="content" class="content"></main>
+    <main id="content" class="content"></main>
+  </div>
 </div>
 
 <script src="/app.js"></script>

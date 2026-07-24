@@ -102,3 +102,59 @@ CREATE TABLE IF NOT EXISTS audit_log (
   changed_by TEXT,
   changed_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- ---------- Billing additions ----------
+
+CREATE TABLE IF NOT EXISTS po_log (
+  id SERIAL PRIMARY KEY,
+  tracker_row_id INTEGER REFERENCES tracker_rows(id) ON DELETE SET NULL,
+  quarter_id INTEGER REFERENCES quarters(id),
+  country TEXT,
+  po_number TEXT,
+  amount NUMERIC,
+  currency_code TEXT DEFAULT 'USD',
+  date_raised DATE,
+  date_received DATE,
+  status TEXT DEFAULT 'Awaiting',   -- Awaiting / Raised / Received / Overdue
+  note TEXT,
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  updated_by TEXT
+);
+
+CREATE TABLE IF NOT EXISTS user_counts (
+  id SERIAL PRIMARY KEY,
+  quarter_id INTEGER REFERENCES quarters(id),
+  country TEXT NOT NULL,
+  user_count INTEGER DEFAULT 0,
+  effective_date DATE,
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  updated_by TEXT
+);
+
+CREATE TABLE IF NOT EXISTS one_time_support (
+  id SERIAL PRIMARY KEY,
+  quarter_id INTEGER REFERENCES quarters(id),
+  country TEXT,
+  category TEXT,   -- Setup / Project Management / Hypercare / Support Retainer / Ad-hoc
+  description TEXT,
+  amount NUMERIC,
+  currency_code TEXT DEFAULT 'USD',
+  charge_date DATE,
+  status TEXT DEFAULT 'Pending',
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  updated_by TEXT
+);
+
+CREATE TABLE IF NOT EXISTS country_rates (
+  id SERIAL PRIMARY KEY,
+  country TEXT NOT NULL UNIQUE,
+  currency_code TEXT NOT NULL DEFAULT 'USD',
+  per_user_price NUMERIC DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS exchange_rates (
+  currency_code TEXT PRIMARY KEY,
+  rate_to_usd NUMERIC NOT NULL,  -- 1 unit of currency_code = rate_to_usd USD
+  updated_at TIMESTAMPTZ DEFAULT now()
+);

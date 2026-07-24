@@ -43,6 +43,20 @@ async function main() {
   // Backfill any existing tracker rows that predate quarter_id
   await pool.query('UPDATE tracker_rows SET quarter_id = $1 WHERE quarter_id IS NULL', [quarterId]);
 
+  // Default exchange rate for USD itself (1:1), so conversions never fail.
+  // Always run this and the country_rates ensure, regardless of whether
+  // tracker_rows already has data.
+  await pool.query(`INSERT INTO exchange_rates (currency_code, rate_to_usd) VALUES ('USD', 1) ON CONFLICT (currency_code) DO NOTHING`);
+
+  const { rows: allCountries } = await pool.query('SELECT DISTINCT country FROM tracker_rows');
+  for (const { country } of allCountries) {
+    await pool.query(
+      `INSERT INTO country_rates (country, currency_code, per_user_price) VALUES ($1,'USD',0) ON CONFLICT (country) DO NOTHING`,
+      [country]
+    );
+  }
+  console.log(`Ensured billing rate rows for ${allCountries.length} countries.`);
+
   const { rows: existing } = await pool.query('SELECT COUNT(*)::int AS c FROM tracker_rows');
   if (existing[0].c > 0) {
     console.log('tracker_rows already has data — skipping seed. Delete rows manually if you want to reseed.');
@@ -76,6 +90,14 @@ async function main() {
     );
   }
   console.log(`Seeded ${seed.tracker.length} tracker rows.`);
+
+  const { rows: freshCountries } = await pool.query('SELECT DISTINCT country FROM tracker_rows');
+  for (const { country } of freshCountries) {
+    await pool.query(
+      `INSERT INTO country_rates (country, currency_code, per_user_price) VALUES ($1,'USD',0) ON CONFLICT (country) DO NOTHING`,
+      [country]
+    );
+  }
 
   for (const r of seed.issues) {
     await pool.query(
