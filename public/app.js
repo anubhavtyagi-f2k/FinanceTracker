@@ -67,7 +67,6 @@ async function loadTab(tab) {
     if (tab === 'tracker') await renderTracker(content);
     else if (tab === 'dashboard') await renderDashboard(content);
     else if (tab === 'milestones') await renderMilestones(content);
-    else if (tab === 'email') await renderEmail(content);
     else if (tab === 'carryover') await renderCarryover(content);
     else if (tab === 'issues') await renderIssues(content);
   } catch (e) {
@@ -90,7 +89,7 @@ async function renderTracker(content) {
   html += '<div><button class="add-btn" id="add-quarter-btn">+ Add Quarter</button></div>';
   html += '</div>';
 
-  html += '<table><thead><tr><th>Country</th><th>FA Owner</th>';
+  html += '<div class="table-scroll"><table><thead><tr><th>Country</th><th>FA Owner</th>';
   STAGES.forEach(([, label]) => html += `<th>${label} Actual</th><th>${label} Status</th>`);
   html += '<th>Blocker/Note</th><th>Next Action</th><th>Action Owner</th><th>Action Due</th></tr></thead><tbody>';
 
@@ -108,7 +107,7 @@ async function renderTracker(content) {
     html += `<td><input type="date" data-field="action_due" value="${fmtDate(r.action_due)}"></td>`;
     html += '</tr>';
   });
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   content.innerHTML = html;
 
   $('#quarter-select').addEventListener('change', async (e) => {
@@ -218,12 +217,6 @@ async function renderMilestones(content) {
   content.innerHTML = html || '<p>No milestone data yet — add rows via the database.</p>';
 }
 
-async function renderEmail(content) {
-  const res = await api('/weekly-email');
-  const text = await res.text();
-  content.innerHTML = `<div class="email-box">${text.replace(/</g, '&lt;')}</div>`;
-}
-
 async function renderCarryover(content) {
   const rows = await (await api('/carryover')).json();
   let html = '<table><thead><tr><th>Country</th><th>Q2 PO Status</th><th>Invoice</th><th>Payment</th><th>Note</th><th>Owner</th><th>Due</th></tr></thead><tbody>';
@@ -234,17 +227,28 @@ async function renderCarryover(content) {
 
 async function renderIssues(content) {
   const rows = await (await api('/issues')).json();
+  const open = rows.filter(r => r.status !== 'Resolved');
+  const closed = rows.filter(r => r.status === 'Resolved');
+
+  function issueTable(list) {
+    let html = '<div class="table-scroll"><table><thead><tr><th>#</th><th>Issue</th><th>Detail</th><th>Owner</th><th>Due</th><th>Status</th></tr></thead><tbody>';
+    list.forEach(r => {
+      html += `<tr data-id="${r.id}"><td>${r.issue_no}</td>`;
+      html += `<td><input type="text" data-field="issue" value="${(r.issue || '').replace(/"/g, '&quot;')}"></td>`;
+      html += `<td><textarea data-field="detail" rows="1">${r.detail || ''}</textarea></td>`;
+      html += `<td><input type="text" data-field="owner" value="${r.owner || ''}"></td>`;
+      html += `<td><input type="date" data-field="due_date" value="${fmtDate(r.due_date)}"></td>`;
+      html += `<td><select data-field="status">${['Open', 'Resolved'].map(s => `<option ${r.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    return html;
+  }
+
   let html = '<button class="add-btn" id="add-issue">+ Add Issue</button>';
-  html += '<table><thead><tr><th>#</th><th>Issue</th><th>Detail</th><th>Owner</th><th>Due</th><th>Status</th></tr></thead><tbody>';
-  rows.forEach(r => {
-    html += `<tr data-id="${r.id}"><td>${r.issue_no}</td>`;
-    html += `<td><input type="text" data-field="issue" value="${(r.issue || '').replace(/"/g, '&quot;')}"></td>`;
-    html += `<td><textarea data-field="detail" rows="1">${r.detail || ''}</textarea></td>`;
-    html += `<td><input type="text" data-field="owner" value="${r.owner || ''}"></td>`;
-    html += `<td><input type="date" data-field="due_date" value="${fmtDate(r.due_date)}"></td>`;
-    html += `<td><select data-field="status">${['Open', 'Resolved'].map(s => `<option ${r.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></td></tr>`;
-  });
-  html += '</tbody></table>';
+  html += `<h3>Open Issues (${open.length})</h3>`;
+  html += open.length ? issueTable(open) : '<p>No open issues.</p>';
+  html += `<h3 style="margin-top:24px">Closed Issues (${closed.length})</h3>`;
+  html += closed.length ? issueTable(closed) : '<p>No closed issues yet.</p>';
   content.innerHTML = html;
 
   content.querySelectorAll('tr[data-id] [data-field]').forEach(el => {
@@ -253,7 +257,8 @@ async function renderIssues(content) {
       const field = el.dataset.field;
       try {
         await api(`/issues/${id}`, { method: 'PATCH', body: JSON.stringify({ [field]: el.value }) });
-        flash('Saved');
+        flash(field === 'status' ? 'Moved' : 'Saved');
+        if (field === 'status') renderIssues(content);
       } catch (e) { flash('Save failed: ' + e.message); }
     });
   });

@@ -34,11 +34,16 @@ body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, sans-serif; back
 .tab-btn.active { color: var(--nivea-blue); border-bottom-color: var(--nivea-blue); font-weight: 600; }
 
 .content { padding: 24px; max-width: 1400px; margin: 0 auto; }
-table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; font-size: 13px; }
-th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+.table-scroll { overflow-x: auto; border-radius: 8px; }
+table { width: max-content; min-width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; font-size: 13px; }
+th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; min-width: 110px; }
 th { background: #eef1f8; font-weight: 600; position: sticky; top: 0; }
 tr:hover { background: #fafbfc; }
 td input, td select, td textarea { width: 100%; border: 1px solid transparent; background: transparent; padding: 4px; font-size: 13px; border-radius: 4px; }
+td select { min-width: 92px; padding-right: 18px; appearance: auto; text-overflow: clip; }
+td { white-space: nowrap; }
+td textarea, td input[type="text"] { white-space: normal; }
+table { table-layout: auto; }
 td input:hover, td select:hover, td textarea:hover { border-color: var(--border); }
 td input:focus, td select:focus, td textarea:focus { border-color: var(--nivea-blue); background: white; outline: none; }
 
