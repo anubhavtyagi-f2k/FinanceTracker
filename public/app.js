@@ -225,31 +225,46 @@ async function renderDashboard(content) {
 
   const nivea = '#0032A0', green = '#16a34a', amber = '#d97706', red = '#dc2626', grey = '#dde3ee';
 
-  charts.rag = new Chart($('#rag-chart'), {
-    type: 'doughnut',
-    data: {
-      labels: ['Green', 'Amber', 'Red'],
-      datasets: [{ data: [d.ragCounts.Green, d.ragCounts.Amber, d.ragCounts.Red], backgroundColor: [green, amber, red] }]
-    },
-    options: { plugins: { legend: { position: 'bottom' } } }
+  function chartOrEmpty(canvasId, total, emptyMessage, buildFn) {
+    if (total === 0) {
+      const canvas = $(canvasId);
+      canvas.replaceWith(Object.assign(document.createElement('p'), { style: 'color:#6b7686;font-size:13px;text-align:center;padding:40px 10px', textContent: emptyMessage }));
+      return;
+    }
+    buildFn();
+  }
+
+  chartOrEmpty('#rag-chart', d.ragCounts.Green + d.ragCounts.Amber + d.ragCounts.Red, 'No RAG status set yet.', () => {
+    charts.rag = new Chart($('#rag-chart'), {
+      type: 'doughnut',
+      data: {
+        labels: ['Green', 'Amber', 'Red'],
+        datasets: [{ data: [d.ragCounts.Green, d.ragCounts.Amber, d.ragCounts.Red], backgroundColor: [green, amber, red] }]
+      },
+      options: { plugins: { legend: { position: 'bottom' } } }
+    });
   });
 
-  charts.po = new Chart($('#po-chart'), {
-    type: 'pie',
-    data: {
-      labels: ['Received', 'Outstanding'],
-      datasets: [{ data: [d.po.received, Math.max(d.po.expected - d.po.received, 0)], backgroundColor: [nivea, grey] }]
-    },
-    options: { plugins: { legend: { position: 'bottom' } } }
+  chartOrEmpty('#po-chart', d.po.expected, 'No POs due yet this quarter.', () => {
+    charts.po = new Chart($('#po-chart'), {
+      type: 'pie',
+      data: {
+        labels: ['Received', 'Outstanding'],
+        datasets: [{ data: [d.po.received, Math.max(d.po.expected - d.po.received, 0)], backgroundColor: [nivea, grey] }]
+      },
+      options: { plugins: { legend: { position: 'bottom' } } }
+    });
   });
 
-  charts.so = new Chart($('#so-chart'), {
-    type: 'pie',
-    data: {
-      labels: ['Issued', 'Outstanding'],
-      datasets: [{ data: [d.so.received, Math.max(d.so.expected - d.so.received, 0)], backgroundColor: [nivea, grey] }]
-    },
-    options: { plugins: { legend: { position: 'bottom' } } }
+  chartOrEmpty('#so-chart', d.so.expected, 'No SOs due yet this quarter.', () => {
+    charts.so = new Chart($('#so-chart'), {
+      type: 'pie',
+      data: {
+        labels: ['Issued', 'Outstanding'],
+        datasets: [{ data: [d.so.received, Math.max(d.so.expected - d.so.received, 0)], backgroundColor: [nivea, grey] }]
+      },
+      options: { plugins: { legend: { position: 'bottom' } } }
+    });
   });
 
   charts.stage = new Chart($('#stage-chart'), {
@@ -267,13 +282,16 @@ async function renderDashboard(content) {
 
   const poStatusLabels = Object.keys(d.billing.poStatusCounts);
   const poStatusColors = { Awaiting: amber, Raised: nivea, Received: green, Overdue: red };
-  charts.poStatus = new Chart($('#po-status-chart'), {
-    type: 'doughnut',
-    data: {
-      labels: poStatusLabels,
-      datasets: [{ data: poStatusLabels.map(k => d.billing.poStatusCounts[k]), backgroundColor: poStatusLabels.map(k => poStatusColors[k]) }]
-    },
-    options: { plugins: { legend: { position: 'bottom' } } }
+  const poStatusTotal = poStatusLabels.reduce((sum, k) => sum + d.billing.poStatusCounts[k], 0);
+  chartOrEmpty('#po-status-chart', poStatusTotal, 'No PO log entries yet.', () => {
+    charts.poStatus = new Chart($('#po-status-chart'), {
+      type: 'doughnut',
+      data: {
+        labels: poStatusLabels,
+        datasets: [{ data: poStatusLabels.map(k => d.billing.poStatusCounts[k]), backgroundColor: poStatusLabels.map(k => poStatusColors[k]) }]
+      },
+      options: { plugins: { legend: { position: 'bottom' } } }
+    });
   });
 
   const list = $('#deadline-list');

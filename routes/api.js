@@ -84,6 +84,32 @@ module.exports = function (pool) {
     res.json({ ...qInsert[0], rowsCreated: prevRows.length });
   });
 
+  router.delete('/quarters/:id', async (req, res) => {
+    const id = req.params.id;
+    const { rows: all } = await pool.query('SELECT * FROM quarters ORDER BY start_date');
+    if (all.length <= 1) return res.status(400).json({ error: 'Cannot delete the only quarter' });
+
+    const target = all.find(q => q.id == id);
+    if (!target) return res.status(404).json({ error: 'Quarter not found' });
+
+    // Clean up everything scoped to this quarter before removing it
+    await pool.query('DELETE FROM tracker_rows WHERE quarter_id = $1', [id]);
+    await pool.query('DELETE FROM po_log WHERE quarter_id = $1', [id]);
+    await pool.query('DELETE FROM user_counts WHERE quarter_id = $1', [id]);
+    await pool.query('DELETE FROM one_time_support WHERE quarter_id = $1', [id]);
+    await pool.query('DELETE FROM quarters WHERE id = $1', [id]);
+
+    // If we just deleted the current quarter, promote the most recent remaining one
+    if (target.is_current) {
+      const remaining = all.filter(q => q.id != id).sort((a, b) => new Date(b.start_date) - new Date(a.start_date));
+      if (remaining.length) {
+        await pool.query('UPDATE quarters SET is_current = true WHERE id = $1', [remaining[0].id]);
+      }
+    }
+
+    res.json({ ok: true });
+  });
+
   // ---------- Q3 Tracker (editable) ----------
   router.get('/tracker', async (req, res) => {
     const quarterId = req.query.quarter_id;
@@ -396,11 +422,13 @@ module.exports = function (pool) {
       });
       if (r.rag && ragCounts[r.rag] !== undefined) ragCounts[r.rag]++;
 
-      if (r.so_plan && new Date(r.so_plan) <= today) {
+      const soDue = r.so_plan && new Date(r.so_plan) <= today;
+      if (soDue || r.so_actual) {
         soExpected++;
         if (r.so_actual) soReceived++;
       }
-      if (r.po_plan && new Date(r.po_plan) <= today) {
+      const poDue = r.po_plan && new Date(r.po_plan) <= today;
+      if (poDue || r.po_actual) {
         poExpected++;
         if (r.po_actual) poReceived++;
       }
