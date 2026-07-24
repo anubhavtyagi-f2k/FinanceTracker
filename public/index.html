@@ -21,6 +21,7 @@
       <button class="side-btn" data-tab="tracker"><span class="side-icon">☰</span> Q3 Tracker</button>
       <button class="side-btn" data-tab="po-tracker"><span class="side-icon">▤</span> PO Tracker</button>
       <button class="side-btn" data-tab="user-counts"><span class="side-icon">◈</span> User Counts</button>
+      <button class="side-btn" data-tab="user-growth"><span class="side-icon">📈</span> User Growth</button>
       <button class="side-btn" data-tab="one-time"><span class="side-icon">◇</span> One-time &amp; Support</button>
       <button class="side-btn" data-tab="reconciliation"><span class="side-icon">⇄</span> Billing Reconciliation</button>
       <button class="side-btn" data-tab="milestones"><span class="side-icon">◔</span> Milestone Calendar</button>
@@ -37,7 +38,17 @@
         <p id="page-subtitle">Beiersdorf × FieldAssist — FAOne billing snapshot &amp; KPIs</p>
       </div>
       <div class="topbar-right">
-        <span id="quarter-badge"></span>
+        <div class="quarter-switcher">
+          <select id="global-quarter-select"></select>
+          <button id="global-add-quarter-btn" title="Add a new quarter">+ Quarter</button>
+          <div id="add-quarter-popover" class="add-quarter-popover hidden">
+            <label>Label</label>
+            <input id="new-q-label" placeholder="e.g. Q4 FY26 (OND 26)">
+            <label>Start date</label>
+            <input id="new-q-start" type="date">
+            <button id="confirm-add-quarter-btn" class="add-btn">Create Quarter</button>
+          </div>
+        </div>
         <span id="user-badge"></span>
         <button id="export-btn">⬇ Export to Excel</button>
       </div>

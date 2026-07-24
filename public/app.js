@@ -33,6 +33,7 @@ function fmtDate(v) {
 // ---------- Session (auth disabled — always goes straight in) ----------
 let CURRENT_QUARTER = null;
 let QUARTERS = [];
+let ACTIVE_TAB = 'dashboard';
 
 async function checkSession() {
   const res = await fetch('/api/session');
@@ -46,8 +47,40 @@ async function checkSession() {
 async function loadQuarters() {
   QUARTERS = await (await api('/quarters')).json();
   CURRENT_QUARTER = QUARTERS.find(q => q.is_current) || QUARTERS[QUARTERS.length - 1];
-  $('#quarter-badge').textContent = CURRENT_QUARTER ? CURRENT_QUARTER.label : '';
+  const sel = $('#global-quarter-select');
+  sel.innerHTML = QUARTERS.map(q => `<option value="${q.id}" ${q.id === CURRENT_QUARTER.id ? 'selected' : ''}>${q.label}</option>`).join('');
 }
+
+$('#global-quarter-select').addEventListener('change', async e => {
+  CURRENT_QUARTER = QUARTERS.find(q => q.id == e.target.value);
+  await loadTab(ACTIVE_TAB);
+});
+
+$('#global-add-quarter-btn').addEventListener('click', () => {
+  $('#add-quarter-popover').classList.toggle('hidden');
+});
+
+$('#confirm-add-quarter-btn').addEventListener('click', async () => {
+  const label = $('#new-q-label').value.trim();
+  const start_date = $('#new-q-start').value;
+  if (!label || !start_date) { flash('Enter a label and start date'); return; }
+  try {
+    await api('/quarters', { method: 'POST', body: JSON.stringify({ label, start_date }) });
+    await loadQuarters();
+    $('#add-quarter-popover').classList.add('hidden');
+    $('#new-q-label').value = '';
+    $('#new-q-start').value = '';
+    flash('Quarter created');
+    await loadTab(ACTIVE_TAB);
+  } catch (e) { flash('Failed: ' + e.message); }
+});
+
+document.addEventListener('click', e => {
+  const popover = $('#add-quarter-popover');
+  if (!popover.classList.contains('hidden') && !popover.contains(e.target) && e.target.id !== 'global-add-quarter-btn') {
+    popover.classList.add('hidden');
+  }
+});
 
 $('#export-btn').addEventListener('click', () => { window.location.href = '/api/export'; });
 
@@ -58,6 +91,7 @@ const TAB_TITLES = {
   tracker: ['Q3 Tracker', 'PO & collection pipeline by country'],
   'po-tracker': ['PO Tracker', 'Detailed PO log and status pipeline'],
   'user-counts': ['User Counts', 'Per-country user counts driving subscription billing'],
+  'user-growth': ['User Growth', 'Quarter-over-quarter user growth and decline by country'],
   'one-time': ['One-time & Support', 'Setup, PM, hypercare, support retainer and ad-hoc charges'],
   reconciliation: ['Billing Reconciliation', 'Carry-forward balances and suggested PO amounts, linked to Subscription and One-time/Support'],
   milestones: ['Milestone Calendar', 'Standing cadence and step owners'],
@@ -70,6 +104,7 @@ $$('.side-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     $$('.side-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    ACTIVE_TAB = btn.dataset.tab;
     const [title, sub] = TAB_TITLES[btn.dataset.tab] || ['', ''];
     $('#page-title').textContent = title;
     $('#page-subtitle').textContent = sub;
@@ -86,6 +121,7 @@ async function loadTab(tab) {
     else if (tab === 'country-view') await renderCountryView(content);
     else if (tab === 'po-tracker') await renderPoTracker(content);
     else if (tab === 'user-counts') await renderUserCounts(content);
+    else if (tab === 'user-growth') await renderUserGrowth(content);
     else if (tab === 'one-time') await renderOneTime(content);
     else if (tab === 'reconciliation') await renderReconciliation(content);
     else if (tab === 'milestones') await renderMilestones(content);
@@ -106,13 +142,6 @@ async function renderTracker(content) {
   const rows = await (await api(`/tracker?quarter_id=${CURRENT_QUARTER.id}`)).json();
 
   let html = '<div class="quarter-form">';
-  html += `<div><label>Viewing quarter</label><select id="quarter-select">${QUARTERS.map(q => `<option value="${q.id}" ${q.id === CURRENT_QUARTER.id ? 'selected' : ''}>${q.label}</option>`).join('')}</select></div>`;
-  html += '<div><label>New quarter label</label><input id="new-q-label" placeholder="e.g. Q4 FY26 (OND 26)"></div>';
-  html += '<div><label>Start date</label><input id="new-q-start" type="date"></div>';
-  html += '<div><button class="add-btn" id="add-quarter-btn">+ Add Quarter</button></div>';
-  html += '</div>';
-
-  html += '<div class="quarter-form">';
   html += '<div><label>Country name</label><input id="new-country-name" placeholder="e.g. Vietnam"></div>';
   html += '<div><label>FA Owner</label><input id="new-country-owner" placeholder="Owner name"></div>';
   html += '<div><button class="add-btn" id="add-country-btn">+ Add Country</button></div>';
@@ -164,24 +193,6 @@ async function renderTracker(content) {
         renderTracker(content);
       } catch (e) { flash('Failed: ' + e.message); }
     });
-  });
-
-  $('#quarter-select').addEventListener('change', async (e) => {
-    CURRENT_QUARTER = QUARTERS.find(q => q.id == e.target.value);
-    $('#quarter-badge').textContent = CURRENT_QUARTER.label;
-    renderTracker(content);
-  });
-
-  $('#add-quarter-btn').addEventListener('click', async () => {
-    const label = $('#new-q-label').value.trim();
-    const start_date = $('#new-q-start').value;
-    if (!label || !start_date) { flash('Enter a label and start date'); return; }
-    try {
-      await api('/quarters', { method: 'POST', body: JSON.stringify({ label, start_date }) });
-      await loadQuarters();
-      flash('Quarter created');
-      renderTracker(content);
-    } catch (e) { flash('Failed: ' + e.message); }
   });
 
   content.querySelectorAll('tr[data-id] [data-field]').forEach(el => {
@@ -809,6 +820,94 @@ async function renderReconciliation(content) {
         el.closest('tr').querySelector('.recon-suggested').innerHTML = `<strong>${s.currency} ${s.suggestedAmount.toLocaleString()}</strong>`;
       } catch (e) { flash('Save failed: ' + e.message); }
     });
+  });
+}
+
+async function renderUserGrowth(content) {
+  const d = await (await api('/user-growth')).json();
+  destroyCharts();
+
+  if (d.quarters.length < 2) {
+    content.innerHTML = '<p>Need at least 2 quarters with user count data to show growth trends. Add another quarter and enter user counts to see this.</p>';
+    return;
+  }
+
+  let html = '<div class="quarter-form">';
+  html += `<div style="min-width:260px"><label>Filter countries (none = show total)</label><select id="growth-country-filter" multiple size="4" style="width:100%">${d.countries.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>`;
+  html += '</div>';
+
+  html += '<div class="chart-card" style="margin-bottom:20px"><h3>User count over time</h3><canvas id="growth-chart" style="height:280px"></canvas></div>';
+
+  const latestTransition = d.transitions[d.transitions.length - 1];
+  html += `<h3>Growth vs ${latestTransition.fromLabel} → ${latestTransition.toLabel}</h3>`;
+  html += '<div class="quarter-form"><div><label>Compare quarters</label><select id="transition-select">';
+  d.transitions.forEach((t, i) => {
+    html += `<option value="${i}" ${i === d.transitions.length - 1 ? 'selected' : ''}>${t.fromLabel} → ${t.toLabel}</option>`;
+  });
+  html += '</select></div></div>';
+  html += '<div id="growth-table-wrap"></div>';
+
+  content.innerHTML = html;
+
+  function renderGrowthTable(transitionIndex) {
+    const t = d.transitions[transitionIndex];
+    const sorted = [...t.changes].sort((a, b) => b.absoluteChange - a.absoluteChange);
+    let tHtml = '<div class="table-scroll"><table><thead><tr><th>Country</th><th>' + t.fromLabel + '</th><th>' + t.toLabel + '</th><th>Change</th><th>% Change</th></tr></thead><tbody>';
+    sorted.forEach(c => {
+      const isNew = c.fromCount === 0 && c.toCount > 0;
+      const pct = isNew ? 'New' : `${c.percentChange >= 0 ? '+' : ''}${c.percentChange.toFixed(1)}%`;
+      const cls = c.absoluteChange > 0 ? 'status-Done' : c.absoluteChange < 0 ? 'status-Delayed' : 'status-OnTrack';
+      tHtml += `<tr><td>${c.country}</td><td>${c.fromCount}</td><td>${c.toCount}</td><td><span class="status-pill ${cls}">${c.absoluteChange >= 0 ? '+' : ''}${c.absoluteChange}</span></td><td>${pct}</td></tr>`;
+    });
+    tHtml += '</tbody></table></div>';
+
+    const growers = sorted.filter(c => c.absoluteChange > 0).slice(0, 3);
+    const decliners = sorted.filter(c => c.absoluteChange < 0).slice(-3).reverse();
+    tHtml += '<div class="card-grid" style="margin-top:16px">';
+    tHtml += `<div class="metric-card accent-green"><div class="icon">📈</div><div><div class="label">Top Growing</div><div class="value" style="font-size:14px">${growers.length ? growers.map(g => `${g.country} (+${g.absoluteChange})`).join(', ') : '—'}</div></div></div>`;
+    tHtml += `<div class="metric-card" style="border-left-color:#dc2626"><div class="icon">📉</div><div><div class="label">Top Declining</div><div class="value" style="font-size:14px">${decliners.length ? decliners.map(g => `${g.country} (${g.absoluteChange})`).join(', ') : '—'}</div></div></div>`;
+    tHtml += '</div>';
+
+    $('#growth-table-wrap').innerHTML = tHtml;
+  }
+
+  function renderGrowthChart(selectedCountries) {
+    const labels = d.quarters.map(q => q.label);
+    let datasets;
+    const palette = ['#0032A0', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#65a30d'];
+
+    if (selectedCountries.length === 0) {
+      const totals = d.quarters.map(q => d.countries.reduce((sum, c) => sum + (d.series[c][q.id] ?? 0), 0));
+      datasets = [{ label: 'Total users', data: totals, borderColor: '#0032A0', backgroundColor: '#0032A0', tension: 0.2 }];
+    } else {
+      datasets = selectedCountries.map((country, i) => ({
+        label: country,
+        data: d.quarters.map(q => d.series[country][q.id] ?? null),
+        borderColor: palette[i % palette.length],
+        backgroundColor: palette[i % palette.length],
+        tension: 0.2,
+        spanGaps: true
+      }));
+    }
+
+    if (charts.growth) charts.growth.destroy();
+    charts.growth = new Chart($('#growth-chart'), {
+      type: 'line',
+      data: { labels, datasets },
+      options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }, plugins: { legend: { position: 'bottom' } } }
+    });
+  }
+
+  renderGrowthChart([]);
+  renderGrowthTable(d.transitions.length - 1);
+
+  $('#growth-country-filter').addEventListener('change', e => {
+    const selected = Array.from(e.target.selectedOptions).map(o => o.value);
+    renderGrowthChart(selected);
+  });
+
+  $('#transition-select').addEventListener('change', e => {
+    renderGrowthTable(Number(e.target.value));
   });
 }
 

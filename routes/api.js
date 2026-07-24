@@ -111,6 +111,43 @@ module.exports = function (pool) {
     res.json({ ok: true });
   });
 
+  // ---------- User Growth (quarter-over-quarter history across all quarters) ----------
+  router.get('/user-growth', async (req, res) => {
+    const { rows: quarters } = await pool.query('SELECT * FROM quarters ORDER BY start_date');
+    const { rows: allCounts } = await pool.query('SELECT quarter_id, country, user_count FROM user_counts ORDER BY country');
+
+    const countries = [...new Set(allCounts.map(r => r.country))].sort();
+
+    // series[country][quarter_id] = user_count (missing quarters left out, frontend treats as null/no data)
+    const series = {};
+    countries.forEach(c => { series[c] = {}; });
+    allCounts.forEach(r => { series[r.country][r.quarter_id] = Number(r.user_count || 0); });
+
+    // Continuous quarter-over-quarter transitions: each quarter vs the one right before it
+    const transitions = [];
+    for (let i = 1; i < quarters.length; i++) {
+      const from = quarters[i - 1], to = quarters[i];
+      const changes = countries.map(country => {
+        const fromCount = series[country][from.id] ?? 0;
+        const toCount = series[country][to.id] ?? 0;
+        const absoluteChange = toCount - fromCount;
+        let percentChange = null;
+        if (fromCount > 0) percentChange = (absoluteChange / fromCount) * 100;
+        else if (toCount > 0) percentChange = null; // "New" — no prior baseline to compute % from
+        else percentChange = 0;
+        return { country, fromCount, toCount, absoluteChange, percentChange };
+      }).filter(c => c.fromCount > 0 || c.toCount > 0); // skip countries with no data in either quarter
+
+      transitions.push({
+        fromQuarterId: from.id, fromLabel: from.label,
+        toQuarterId: to.id, toLabel: to.label,
+        changes
+      });
+    }
+
+    res.json({ quarters, countries, series, transitions });
+  });
+
   // ---------- Suggested PO amount (Subscription + One-time/Support + Carry-forward) ----------
   router.get('/suggested-po/:country', async (req, res) => {
     const { country } = req.params;
