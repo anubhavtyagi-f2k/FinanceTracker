@@ -59,6 +59,7 @@ const TAB_TITLES = {
   'po-tracker': ['PO Tracker', 'Detailed PO log and status pipeline'],
   'user-counts': ['User Counts', 'Per-country user counts driving subscription billing'],
   'one-time': ['One-time & Support', 'Setup, PM, hypercare, support retainer and ad-hoc charges'],
+  reconciliation: ['Billing Reconciliation', 'Carry-forward balances and suggested PO amounts, linked to Subscription and One-time/Support'],
   milestones: ['Milestone Calendar', 'Standing cadence and step owners'],
   carryover: ['Q2 Carry-over', 'Open items carried into this quarter'],
   issues: ['Open Issues', 'Items needing an answer before numbers are clean'],
@@ -86,6 +87,7 @@ async function loadTab(tab) {
     else if (tab === 'po-tracker') await renderPoTracker(content);
     else if (tab === 'user-counts') await renderUserCounts(content);
     else if (tab === 'one-time') await renderOneTime(content);
+    else if (tab === 'reconciliation') await renderReconciliation(content);
     else if (tab === 'milestones') await renderMilestones(content);
     else if (tab === 'carryover') await renderCarryover(content);
     else if (tab === 'issues') await renderIssues(content);
@@ -402,6 +404,7 @@ async function renderPoTracker(content) {
   html += '<div><label>Currency</label><input id="new-po-currency" placeholder="USD" value="USD" style="width:70px"></div>';
   html += '<div><button class="add-btn" id="add-po-btn">+ Add PO</button></div>';
   html += '</div>';
+  html += '<p id="po-suggestion-note" style="color:#6b7686;font-size:13px;margin-top:-8px"></p>';
 
   html += '<div class="table-scroll"><table><thead><tr><th>Country</th><th>PO Number</th><th>Amount</th><th>Currency</th><th>Date Raised</th><th>Date Received</th><th>Status</th><th>Note</th><th></th></tr></thead><tbody>';
   rows.forEach(r => {
@@ -417,6 +420,20 @@ async function renderPoTracker(content) {
   });
   html += '</tbody></table></div>';
   content.innerHTML = html;
+
+  async function loadSuggestion() {
+    const country = $('#new-po-country').value;
+    if (!country) return;
+    try {
+      const s = await (await api(`/suggested-po/${encodeURIComponent(country)}?quarter_id=${CURRENT_QUARTER.id}`)).json();
+      $('#new-po-amount').value = s.suggestedAmount.toFixed(2);
+      $('#new-po-currency').value = s.currency;
+      $('#po-suggestion-note').textContent =
+        `Suggested from: Subscription ${s.currency} ${s.subscription.toLocaleString()} + One-time/Support ${s.currency} ${s.oneTime.toLocaleString()} + Carry-forward ${s.currency} ${s.carryForward.toLocaleString()}. Edit the amount above to override.`;
+    } catch (e) { /* leave fields as-is if this fails */ }
+  }
+  $('#new-po-country').addEventListener('change', loadSuggestion);
+  loadSuggestion();
 
   $('#add-po-btn').addEventListener('click', async () => {
     const sel = $('#new-po-country');
@@ -704,7 +721,8 @@ async function renderCountryView(content) {
     b += `<div class="metric-card accent-amber"><div class="icon">🧾</div><div><div class="label">One-time & Support</div><div class="value">${currency} ${otTotal.toLocaleString()}</div></div></div>`;
     b += '</div>';
 
-    b += `<p style="color:#6b7686;font-size:13px">FA Owner: <strong>${t.fa_owner || '—'}</strong> · BDF Owner: <strong>${t.bdf_owner || '—'}</strong> · Awaiting Step: <strong>${t.awaiting_step || '—'}</strong> · Days Late: <strong>${t.days_late ?? 0}</strong></p>`;
+    b += `<p style="color:#6b7686;font-size:13px">FA Owner: <strong>${t.fa_owner || '—'}</strong> · BDF Owner: <strong>${t.bdf_owner || '—'}</strong> · Awaiting Step: <strong>${t.awaiting_step || '—'}</strong> · Days Late: <strong>${t.days_late ?? 0}</strong> · Carry-forward: <strong>${currency} ${Number(t.carry_forward_amount || 0).toLocaleString()}</strong></p>`;
+    b += `<p style="color:#6b7686;font-size:13px">Suggested PO amount this quarter: <strong>${currency} ${(subCharge + otTotal + Number(t.carry_forward_amount || 0)).toLocaleString()}</strong> (Subscription + One-time/Support + Carry-forward)</p>`;
 
     b += '<h3>Pipeline stages</h3><div class="table-scroll"><table><thead><tr><th>Stage</th><th>Plan</th><th>Actual</th><th>Status</th></tr></thead><tbody>';
     STAGES.forEach(([key, label]) => {
@@ -746,6 +764,51 @@ async function renderCountryView(content) {
 
   $('#cv-country-select').addEventListener('change', e => draw(e.target.value));
   draw(trackerRows[0].country);
+}
+
+async function renderReconciliation(content) {
+  const trackerRows = await (await api(`/tracker?quarter_id=${CURRENT_QUARTER.id}`)).json();
+
+  if (trackerRows.length === 0) {
+    content.innerHTML = '<p>No countries in this quarter yet.</p>';
+    return;
+  }
+
+  let html = '<p style="color:#6b7686;font-size:13px;margin-bottom:16px">Carry-forward is a fresh balance each quarter — positive means the country still owes from last quarter, negative means they overpaid (credit). It combines with Subscription and One-time/Support to suggest each PO amount in PO Tracker.</p>';
+  html += '<div class="table-scroll"><table><thead><tr><th>Country</th><th>Subscription</th><th>One-time/Support</th><th>Carry-forward</th><th>Suggested PO Amount</th></tr></thead><tbody>';
+  trackerRows.forEach(r => {
+    html += `<tr data-id="${r.id}" data-country="${r.country}"><td>${r.country}</td>`;
+    html += `<td class="recon-sub">…</td><td class="recon-ot">…</td>`;
+    html += `<td><input type="number" data-field="carry_forward_amount" value="${r.carry_forward_amount ?? 0}" title="Positive = still owed from last quarter, negative = credit/overpaid"></td>`;
+    html += `<td class="recon-suggested">…</td></tr>`;
+  });
+  html += '</tbody></table></div>';
+  content.innerHTML = html;
+
+  // Pull the linked figures (Subscription + One-time/Support) per country
+  // from the same suggested-po endpoint PO Tracker uses, so both stay in sync.
+  content.querySelectorAll('tr[data-country]').forEach(async tr => {
+    const country = tr.dataset.country;
+    try {
+      const s = await (await api(`/suggested-po/${encodeURIComponent(country)}?quarter_id=${CURRENT_QUARTER.id}`)).json();
+      tr.querySelector('.recon-sub').textContent = `${s.currency} ${s.subscription.toLocaleString()}`;
+      tr.querySelector('.recon-ot').textContent = `${s.currency} ${s.oneTime.toLocaleString()}`;
+      tr.querySelector('.recon-suggested').innerHTML = `<strong>${s.currency} ${s.suggestedAmount.toLocaleString()}</strong>`;
+    } catch (e) { /* leave placeholders if this fails */ }
+  });
+
+  content.querySelectorAll('tr[data-id] [data-field]').forEach(el => {
+    el.addEventListener('change', async () => {
+      const id = el.closest('tr').dataset.id;
+      const country = el.closest('tr').dataset.country;
+      try {
+        await api(`/tracker/${id}`, { method: 'PATCH', body: JSON.stringify({ [el.dataset.field]: el.value }) });
+        flash('Saved');
+        const s = await (await api(`/suggested-po/${encodeURIComponent(country)}?quarter_id=${CURRENT_QUARTER.id}`)).json();
+        el.closest('tr').querySelector('.recon-suggested').innerHTML = `<strong>${s.currency} ${s.suggestedAmount.toLocaleString()}</strong>`;
+      } catch (e) { flash('Save failed: ' + e.message); }
+    });
+  });
 }
 
 checkSession();

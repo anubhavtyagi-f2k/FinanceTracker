@@ -22,7 +22,7 @@ module.exports = function (pool) {
     'invoice_actual', 'invoice_status',
     'payment_actual', 'payment_status',
     'blocker_note', 'next_action', 'action_owner', 'action_due',
-    'awaiting_step', 'current_step_due', 'days_late', 'rag'
+    'awaiting_step', 'current_step_due', 'days_late', 'rag', 'carry_forward_amount'
   ];
 
   // ---------- Quarters ----------
@@ -108,6 +108,41 @@ module.exports = function (pool) {
     }
 
     res.json({ ok: true });
+  });
+
+  // ---------- Suggested PO amount (Subscription + One-time/Support + Carry-forward) ----------
+  router.get('/suggested-po/:country', async (req, res) => {
+    const { country } = req.params;
+    const quarterId = req.query.quarter_id;
+    const qClause = quarterId ? 'quarter_id = $2' : `quarter_id = (SELECT id FROM quarters WHERE is_current = true LIMIT 1)`;
+    const qParams = quarterId ? [country, quarterId] : [country];
+
+    const { rows: trackerRows } = await pool.query(
+      `SELECT carry_forward_amount FROM tracker_rows WHERE country = $1 AND ${qClause}`, qParams
+    );
+    const carryForward = trackerRows.length ? Number(trackerRows[0].carry_forward_amount || 0) : 0;
+
+    const { rows: rateRows } = await pool.query('SELECT * FROM country_rates WHERE country = $1', [country]);
+    const rate = rateRows[0];
+    const currency = rate ? rate.currency_code : 'USD';
+    const perUserPrice = rate ? Number(rate.per_user_price || 0) : 0;
+
+    const { rows: ucRows } = await pool.query(
+      `SELECT COALESCE(SUM(user_count),0) AS total FROM user_counts WHERE country = $1 AND ${qClause}`, qParams
+    );
+    const userCount = Number(ucRows[0].total || 0);
+    const subscription = userCount * perUserPrice;
+
+    const { rows: otRows } = await pool.query(
+      `SELECT COALESCE(SUM(amount),0) AS total FROM one_time_support WHERE country = $1 AND ${qClause}`, qParams
+    );
+    const oneTime = Number(otRows[0].total || 0);
+
+    res.json({
+      country, currency,
+      subscription, oneTime, carryForward,
+      suggestedAmount: subscription + oneTime + carryForward
+    });
   });
 
   // ---------- Q3 Tracker (editable) ----------

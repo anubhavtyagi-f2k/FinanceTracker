@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS tracker_rows (
   current_step_due DATE,
   days_late INTEGER,
   rag TEXT,           -- Green / Amber / Red health status per the original sheet
+  carry_forward_amount NUMERIC DEFAULT 0,  -- unpaid (+) or overpaid (-) balance rolled into this quarter, set fresh each quarter
 
   updated_at TIMESTAMPTZ DEFAULT now(),
   updated_by TEXT
@@ -65,6 +66,7 @@ ALTER TABLE tracker_rows ADD COLUMN IF NOT EXISTS awaiting_step TEXT;
 ALTER TABLE tracker_rows ADD COLUMN IF NOT EXISTS current_step_due DATE;
 ALTER TABLE tracker_rows ADD COLUMN IF NOT EXISTS days_late INTEGER;
 ALTER TABLE tracker_rows ADD COLUMN IF NOT EXISTS rag TEXT;
+ALTER TABLE tracker_rows ADD COLUMN IF NOT EXISTS carry_forward_amount NUMERIC DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS milestone_calendar (
   id SERIAL PRIMARY KEY,
