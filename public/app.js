@@ -91,7 +91,6 @@ const TAB_TITLES = {
   tracker: ['Q3 Tracker', 'PO & collection pipeline by country'],
   'po-tracker': ['PO Tracker', 'Detailed PO log and status pipeline'],
   'user-counts': ['User Counts', 'Per-country user counts driving subscription billing'],
-  'user-growth': ['User Growth', 'Quarter-over-quarter user growth and decline by country'],
   'one-time': ['One-time & Support', 'Setup, PM, hypercare, support retainer and ad-hoc charges'],
   reconciliation: ['Billing Reconciliation', 'Carry-forward balances and suggested PO amounts, linked to Subscription and One-time/Support'],
   milestones: ['Milestone Calendar', 'Standing cadence and step owners'],
@@ -121,7 +120,6 @@ async function loadTab(tab) {
     else if (tab === 'country-view') await renderCountryView(content);
     else if (tab === 'po-tracker') await renderPoTracker(content);
     else if (tab === 'user-counts') await renderUserCounts(content);
-    else if (tab === 'user-growth') await renderUserGrowth(content);
     else if (tab === 'one-time') await renderOneTime(content);
     else if (tab === 'reconciliation') await renderReconciliation(content);
     else if (tab === 'milestones') await renderMilestones(content);
@@ -227,62 +225,32 @@ async function renderDashboard(content) {
   html += `<div class="metric-card"><div class="icon">📑</div><div><div class="label">PO Log Total (USD)</div><div class="value">$${d.billing.poTotalUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div></div></div>`;
   html += '</div>';
 
-  html += '<div class="chart-grid">';
-  html += '<div class="chart-card"><h3>Country Health (RAG)</h3><canvas id="rag-chart"></canvas></div>';
-  html += '<div class="chart-card"><h3>PO Received vs Expected</h3><canvas id="po-chart"></canvas></div>';
-  html += '<div class="chart-card"><h3>SO Issued vs Expected</h3><canvas id="so-chart"></canvas></div>';
-  html += '<div class="chart-card"><h3>PO Log Status</h3><canvas id="po-status-chart"></canvas></div>';
-  html += '</div>';
-
   html += '<div class="chart-card chart-card-wide"><h3>Pipeline Status by Stage</h3><canvas id="stage-chart"></canvas></div>';
 
   html += '<div class="chart-card"><h3>Deadlines in the next 7 days</h3><div class="deadline-list" id="deadline-list"></div></div>';
 
+  // ---- User Growth section (was its own tab, now lives on the Dashboard) ----
+  const g = await (await api('/user-growth')).json();
+  html += '<h3 style="margin-top:24px">User Growth</h3>';
+  if (g.quarters.length < 2) {
+    html += '<p style="color:#6b7686;font-size:13px">Need at least 2 quarters with user count data to show growth trends.</p>';
+  } else {
+    html += '<div class="quarter-form">';
+    html += `<div style="min-width:260px"><label>Filter countries (none = show total)</label><select id="growth-country-filter" multiple size="4" style="width:100%">${g.countries.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>`;
+    html += '</div>';
+    html += '<div class="chart-card chart-card-wide"><h3>User count over time</h3><canvas id="growth-chart" style="height:280px"></canvas></div>';
+
+    html += '<div class="quarter-form"><div><label>Compare quarters</label><select id="transition-select">';
+    g.transitions.forEach((t, i) => {
+      html += `<option value="${i}" ${i === g.transitions.length - 1 ? 'selected' : ''}>${t.fromLabel} → ${t.toLabel}</option>`;
+    });
+    html += '</select></div></div>';
+    html += '<div id="growth-table-wrap"></div>';
+  }
+
   content.innerHTML = html;
 
   const nivea = '#0032A0', green = '#16a34a', amber = '#d97706', red = '#dc2626', grey = '#dde3ee';
-
-  function chartOrEmpty(canvasId, total, emptyMessage, buildFn) {
-    if (total === 0) {
-      const canvas = $(canvasId);
-      canvas.replaceWith(Object.assign(document.createElement('p'), { style: 'color:#6b7686;font-size:13px;text-align:center;padding:40px 10px', textContent: emptyMessage }));
-      return;
-    }
-    buildFn();
-  }
-
-  chartOrEmpty('#rag-chart', d.ragCounts.Green + d.ragCounts.Amber + d.ragCounts.Red, 'No RAG status set yet.', () => {
-    charts.rag = new Chart($('#rag-chart'), {
-      type: 'doughnut',
-      data: {
-        labels: ['Green', 'Amber', 'Red'],
-        datasets: [{ data: [d.ragCounts.Green, d.ragCounts.Amber, d.ragCounts.Red], backgroundColor: [green, amber, red] }]
-      },
-      options: { plugins: { legend: { position: 'bottom' } } }
-    });
-  });
-
-  chartOrEmpty('#po-chart', d.po.expected, 'No POs due yet this quarter.', () => {
-    charts.po = new Chart($('#po-chart'), {
-      type: 'pie',
-      data: {
-        labels: ['Received', 'Outstanding'],
-        datasets: [{ data: [d.po.received, Math.max(d.po.expected - d.po.received, 0)], backgroundColor: [nivea, grey] }]
-      },
-      options: { plugins: { legend: { position: 'bottom' } } }
-    });
-  });
-
-  chartOrEmpty('#so-chart', d.so.expected, 'No SOs due yet this quarter.', () => {
-    charts.so = new Chart($('#so-chart'), {
-      type: 'pie',
-      data: {
-        labels: ['Issued', 'Outstanding'],
-        datasets: [{ data: [d.so.received, Math.max(d.so.expected - d.so.received, 0)], backgroundColor: [nivea, grey] }]
-      },
-      options: { plugins: { legend: { position: 'bottom' } } }
-    });
-  });
 
   charts.stage = new Chart($('#stage-chart'), {
     type: 'bar',
@@ -303,20 +271,6 @@ async function renderDashboard(content) {
     }
   });
 
-  const poStatusLabels = Object.keys(d.billing.poStatusCounts);
-  const poStatusColors = { Awaiting: amber, Raised: nivea, Received: green, Overdue: red };
-  const poStatusTotal = poStatusLabels.reduce((sum, k) => sum + d.billing.poStatusCounts[k], 0);
-  chartOrEmpty('#po-status-chart', poStatusTotal, 'No PO log entries yet.', () => {
-    charts.poStatus = new Chart($('#po-status-chart'), {
-      type: 'doughnut',
-      data: {
-        labels: poStatusLabels,
-        datasets: [{ data: poStatusLabels.map(k => d.billing.poStatusCounts[k]), backgroundColor: poStatusLabels.map(k => poStatusColors[k]) }]
-      },
-      options: { plugins: { legend: { position: 'bottom' } } }
-    });
-  });
-
   const list = $('#deadline-list');
   if (d.deadlines.length === 0) {
     list.innerHTML = '<div class="deadline-row">No deadlines in the next 7 days.</div>';
@@ -326,6 +280,69 @@ async function renderDashboard(content) {
       const label = dl.daysOut < 0 ? `${Math.abs(dl.daysOut)}d overdue` : dl.daysOut === 0 ? 'Today' : `${dl.daysOut}d left`;
       return `<div class="deadline-row"><span><strong>${dl.country}</strong> — ${dl.action || 'Action pending'} (${dl.owner || 'Unassigned'})</span><span class="days-out ${cls}">${label}</span></div>`;
     }).join('');
+  }
+
+  if (g.quarters.length >= 2) {
+    function renderGrowthTable(transitionIndex) {
+      const t = g.transitions[transitionIndex];
+      const sorted = [...t.changes].sort((a, b) => b.absoluteChange - a.absoluteChange);
+      let tHtml = '<div class="table-scroll"><table><thead><tr><th>Country</th><th>' + t.fromLabel + '</th><th>' + t.toLabel + '</th><th>Change</th><th>% Change</th></tr></thead><tbody>';
+      sorted.forEach(c => {
+        const isNew = c.fromCount === 0 && c.toCount > 0;
+        const pct = isNew ? 'New' : `${c.percentChange >= 0 ? '+' : ''}${c.percentChange.toFixed(1)}%`;
+        const cls = c.absoluteChange > 0 ? 'status-Done' : c.absoluteChange < 0 ? 'status-Delayed' : 'status-OnTrack';
+        tHtml += `<tr><td>${c.country}</td><td>${c.fromCount}</td><td>${c.toCount}</td><td><span class="status-pill ${cls}">${c.absoluteChange >= 0 ? '+' : ''}${c.absoluteChange}</span></td><td>${pct}</td></tr>`;
+      });
+      tHtml += '</tbody></table></div>';
+
+      const growers = sorted.filter(c => c.absoluteChange > 0).slice(0, 3);
+      const decliners = sorted.filter(c => c.absoluteChange < 0).slice(-3).reverse();
+      tHtml += '<div class="card-grid" style="margin-top:16px">';
+      tHtml += `<div class="metric-card accent-green"><div class="icon">📈</div><div><div class="label">Top Growing</div><div class="value" style="font-size:14px">${growers.length ? growers.map(gr => `${gr.country} (+${gr.absoluteChange})`).join(', ') : '—'}</div></div></div>`;
+      tHtml += `<div class="metric-card" style="border-left-color:#dc2626"><div class="icon">📉</div><div><div class="label">Top Declining</div><div class="value" style="font-size:14px">${decliners.length ? decliners.map(gr => `${gr.country} (${gr.absoluteChange})`).join(', ') : '—'}</div></div></div>`;
+      tHtml += '</div>';
+
+      $('#growth-table-wrap').innerHTML = tHtml;
+    }
+
+    function renderGrowthChart(selectedCountries) {
+      const labels = g.quarters.map(q => q.label);
+      let datasets;
+      const palette = ['#0032A0', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#65a30d'];
+
+      if (selectedCountries.length === 0) {
+        const totals = g.quarters.map(q => g.countries.reduce((sum, c) => sum + (g.series[c][q.id] ?? 0), 0));
+        datasets = [{ label: 'Total users', data: totals, borderColor: '#0032A0', backgroundColor: '#0032A0', tension: 0.2 }];
+      } else {
+        datasets = selectedCountries.map((country, i) => ({
+          label: country,
+          data: g.quarters.map(q => g.series[country][q.id] ?? null),
+          borderColor: palette[i % palette.length],
+          backgroundColor: palette[i % palette.length],
+          tension: 0.2,
+          spanGaps: true
+        }));
+      }
+
+      if (charts.growth) charts.growth.destroy();
+      charts.growth = new Chart($('#growth-chart'), {
+        type: 'line',
+        data: { labels, datasets },
+        options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }, plugins: { legend: { position: 'bottom' } } }
+      });
+    }
+
+    renderGrowthChart([]);
+    renderGrowthTable(g.transitions.length - 1);
+
+    $('#growth-country-filter').addEventListener('change', e => {
+      const selected = Array.from(e.target.selectedOptions).map(o => o.value);
+      renderGrowthChart(selected);
+    });
+
+    $('#transition-select').addEventListener('change', e => {
+      renderGrowthTable(Number(e.target.value));
+    });
   }
 }
 
@@ -820,94 +837,6 @@ async function renderReconciliation(content) {
         el.closest('tr').querySelector('.recon-suggested').innerHTML = `<strong>${s.currency} ${s.suggestedAmount.toLocaleString()}</strong>`;
       } catch (e) { flash('Save failed: ' + e.message); }
     });
-  });
-}
-
-async function renderUserGrowth(content) {
-  const d = await (await api('/user-growth')).json();
-  destroyCharts();
-
-  if (d.quarters.length < 2) {
-    content.innerHTML = '<p>Need at least 2 quarters with user count data to show growth trends. Add another quarter and enter user counts to see this.</p>';
-    return;
-  }
-
-  let html = '<div class="quarter-form">';
-  html += `<div style="min-width:260px"><label>Filter countries (none = show total)</label><select id="growth-country-filter" multiple size="4" style="width:100%">${d.countries.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>`;
-  html += '</div>';
-
-  html += '<div class="chart-card" style="margin-bottom:20px"><h3>User count over time</h3><canvas id="growth-chart" style="height:280px"></canvas></div>';
-
-  const latestTransition = d.transitions[d.transitions.length - 1];
-  html += `<h3>Growth vs ${latestTransition.fromLabel} → ${latestTransition.toLabel}</h3>`;
-  html += '<div class="quarter-form"><div><label>Compare quarters</label><select id="transition-select">';
-  d.transitions.forEach((t, i) => {
-    html += `<option value="${i}" ${i === d.transitions.length - 1 ? 'selected' : ''}>${t.fromLabel} → ${t.toLabel}</option>`;
-  });
-  html += '</select></div></div>';
-  html += '<div id="growth-table-wrap"></div>';
-
-  content.innerHTML = html;
-
-  function renderGrowthTable(transitionIndex) {
-    const t = d.transitions[transitionIndex];
-    const sorted = [...t.changes].sort((a, b) => b.absoluteChange - a.absoluteChange);
-    let tHtml = '<div class="table-scroll"><table><thead><tr><th>Country</th><th>' + t.fromLabel + '</th><th>' + t.toLabel + '</th><th>Change</th><th>% Change</th></tr></thead><tbody>';
-    sorted.forEach(c => {
-      const isNew = c.fromCount === 0 && c.toCount > 0;
-      const pct = isNew ? 'New' : `${c.percentChange >= 0 ? '+' : ''}${c.percentChange.toFixed(1)}%`;
-      const cls = c.absoluteChange > 0 ? 'status-Done' : c.absoluteChange < 0 ? 'status-Delayed' : 'status-OnTrack';
-      tHtml += `<tr><td>${c.country}</td><td>${c.fromCount}</td><td>${c.toCount}</td><td><span class="status-pill ${cls}">${c.absoluteChange >= 0 ? '+' : ''}${c.absoluteChange}</span></td><td>${pct}</td></tr>`;
-    });
-    tHtml += '</tbody></table></div>';
-
-    const growers = sorted.filter(c => c.absoluteChange > 0).slice(0, 3);
-    const decliners = sorted.filter(c => c.absoluteChange < 0).slice(-3).reverse();
-    tHtml += '<div class="card-grid" style="margin-top:16px">';
-    tHtml += `<div class="metric-card accent-green"><div class="icon">📈</div><div><div class="label">Top Growing</div><div class="value" style="font-size:14px">${growers.length ? growers.map(g => `${g.country} (+${g.absoluteChange})`).join(', ') : '—'}</div></div></div>`;
-    tHtml += `<div class="metric-card" style="border-left-color:#dc2626"><div class="icon">📉</div><div><div class="label">Top Declining</div><div class="value" style="font-size:14px">${decliners.length ? decliners.map(g => `${g.country} (${g.absoluteChange})`).join(', ') : '—'}</div></div></div>`;
-    tHtml += '</div>';
-
-    $('#growth-table-wrap').innerHTML = tHtml;
-  }
-
-  function renderGrowthChart(selectedCountries) {
-    const labels = d.quarters.map(q => q.label);
-    let datasets;
-    const palette = ['#0032A0', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#65a30d'];
-
-    if (selectedCountries.length === 0) {
-      const totals = d.quarters.map(q => d.countries.reduce((sum, c) => sum + (d.series[c][q.id] ?? 0), 0));
-      datasets = [{ label: 'Total users', data: totals, borderColor: '#0032A0', backgroundColor: '#0032A0', tension: 0.2 }];
-    } else {
-      datasets = selectedCountries.map((country, i) => ({
-        label: country,
-        data: d.quarters.map(q => d.series[country][q.id] ?? null),
-        borderColor: palette[i % palette.length],
-        backgroundColor: palette[i % palette.length],
-        tension: 0.2,
-        spanGaps: true
-      }));
-    }
-
-    if (charts.growth) charts.growth.destroy();
-    charts.growth = new Chart($('#growth-chart'), {
-      type: 'line',
-      data: { labels, datasets },
-      options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }, plugins: { legend: { position: 'bottom' } } }
-    });
-  }
-
-  renderGrowthChart([]);
-  renderGrowthTable(d.transitions.length - 1);
-
-  $('#growth-country-filter').addEventListener('change', e => {
-    const selected = Array.from(e.target.selectedOptions).map(o => o.value);
-    renderGrowthChart(selected);
-  });
-
-  $('#transition-select').addEventListener('change', e => {
-    renderGrowthTable(Number(e.target.value));
   });
 }
 
