@@ -76,6 +76,8 @@ td input:focus, td select:focus, td textarea:focus { border-color: var(--nivea-b
 .chart-card { background: white; padding: 18px; border-radius: 10px; border: 1px solid var(--border); }
 .chart-card h3 { margin: 0 0 12px; font-size: 14px; color: var(--nivea-blue-dark); }
 .chart-card canvas { max-height: 240px; }
+.chart-card-wide { margin-bottom: 20px; }
+.chart-card-wide canvas { max-height: none; height: 280px !important; }
 
 .deadline-list { background: white; border-radius: 10px; border: 1px solid var(--border); overflow: hidden; }
 .deadline-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13px; }

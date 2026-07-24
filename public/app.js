@@ -215,9 +215,10 @@ async function renderDashboard(content) {
   html += '<div class="chart-card"><h3>Country Health (RAG)</h3><canvas id="rag-chart"></canvas></div>';
   html += '<div class="chart-card"><h3>PO Received vs Expected</h3><canvas id="po-chart"></canvas></div>';
   html += '<div class="chart-card"><h3>SO Issued vs Expected</h3><canvas id="so-chart"></canvas></div>';
-  html += '<div class="chart-card"><h3>Pipeline Status by Stage</h3><canvas id="stage-chart"></canvas></div>';
   html += '<div class="chart-card"><h3>PO Log Status</h3><canvas id="po-status-chart"></canvas></div>';
   html += '</div>';
+
+  html += '<div class="chart-card chart-card-wide"><h3>Pipeline Status by Stage</h3><canvas id="stage-chart"></canvas></div>';
 
   html += '<div class="chart-card"><h3>Deadlines in the next 7 days</h3><div class="deadline-list" id="deadline-list"></div></div>';
 
@@ -277,7 +278,13 @@ async function renderDashboard(content) {
         { label: 'Delayed', data: STAGES.map(s => d.stageStatus[s[0]].Delayed), backgroundColor: red }
       ]
     },
-    options: { responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }, plugins: { legend: { position: 'bottom' } } }
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }, y: { stacked: true } },
+      plugins: { legend: { position: 'bottom' } }
+    }
   });
 
   const poStatusLabels = Object.keys(d.billing.poStatusCounts);
