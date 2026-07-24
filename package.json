@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "initdb": "node db/init.js"
+    "initdb": "node db/init.js",
+    "backfillpo": "node db/backfill_po.js"
   },
   "dependencies": {
     "express": "^4.19.2",

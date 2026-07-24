@@ -114,12 +114,15 @@ async function renderTracker(content) {
   html += '<div><button class="add-btn" id="add-country-btn">+ Add Country</button></div>';
   html += '</div>';
 
-  html += '<div class="table-scroll"><table><thead><tr><th>Country</th><th>FA Owner</th>';
+  html += '<div class="table-scroll"><table><thead><tr><th>Country</th><th>FA Owner</th><th>RAG</th><th>Awaiting Step</th><th>Days Late</th>';
   STAGES.forEach(([, label]) => html += `<th>${label} Actual</th><th>${label} Status</th>`);
   html += '<th>Blocker/Note</th><th>Next Action</th><th>Action Owner</th><th>Action Due</th><th></th></tr></thead><tbody>';
 
   rows.forEach(r => {
     html += `<tr data-id="${r.id}"><td>${r.country}</td><td>${r.fa_owner || ''}</td>`;
+    html += `<td><select data-field="rag">${['Green', 'Amber', 'Red'].map(c => `<option ${r.rag === c ? 'selected' : ''}>${c}</option>`).join('')}</select></td>`;
+    html += `<td><input type="text" data-field="awaiting_step" value="${r.awaiting_step || ''}"></td>`;
+    html += `<td><input type="number" data-field="days_late" value="${r.days_late ?? 0}" style="width:60px"></td>`;
     STAGES.forEach(([key]) => {
       html += `<td><input type="date" data-field="${key}_actual" value="${fmtDate(r[key + '_actual'])}"></td>`;
       html += `<td><select data-field="${key}_status">
@@ -209,6 +212,7 @@ async function renderDashboard(content) {
   html += '</div>';
 
   html += '<div class="chart-grid">';
+  html += '<div class="chart-card"><h3>Country Health (RAG)</h3><canvas id="rag-chart"></canvas></div>';
   html += '<div class="chart-card"><h3>PO Received vs Expected</h3><canvas id="po-chart"></canvas></div>';
   html += '<div class="chart-card"><h3>SO Issued vs Expected</h3><canvas id="so-chart"></canvas></div>';
   html += '<div class="chart-card"><h3>Pipeline Status by Stage</h3><canvas id="stage-chart"></canvas></div>';
@@ -220,6 +224,15 @@ async function renderDashboard(content) {
   content.innerHTML = html;
 
   const nivea = '#0032A0', green = '#16a34a', amber = '#d97706', red = '#dc2626', grey = '#dde3ee';
+
+  charts.rag = new Chart($('#rag-chart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Green', 'Amber', 'Red'],
+      datasets: [{ data: [d.ragCounts.Green, d.ragCounts.Amber, d.ragCounts.Red], backgroundColor: [green, amber, red] }]
+    },
+    options: { plugins: { legend: { position: 'bottom' } } }
+  });
 
   charts.po = new Chart($('#po-chart'), {
     type: 'pie',

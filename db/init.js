@@ -57,6 +57,17 @@ async function main() {
   }
   console.log(`Ensured billing rate rows for ${allCountries.length} countries.`);
 
+  // Backfill Awaiting Step / Current Step Due / Days Late / RAG onto rows
+  // that were seeded before these columns existed — matched by country.
+  for (const r of seed.tracker) {
+    await pool.query(
+      `UPDATE tracker_rows SET awaiting_step = $1, current_step_due = $2, days_late = $3, rag = $4
+       WHERE country = $5 AND quarter_id = $6`,
+      [r[23], d(r[24]), r[25], r[26], r[0], quarterId]
+    );
+  }
+  console.log('Backfilled Awaiting Step / Current Step Due / Days Late / RAG onto existing rows.');
+
   const { rows: existing } = await pool.query('SELECT COUNT(*)::int AS c FROM tracker_rows');
   if (existing[0].c > 0) {
     console.log('tracker_rows already has data — skipping seed. Delete rows manually if you want to reseed.');
@@ -74,8 +85,9 @@ async function main() {
         po_plan, po_actual, po_status,
         invoice_plan, invoice_actual, invoice_status,
         payment_plan, payment_actual, payment_status,
-        blocker_note, next_action, action_owner, action_due)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
+        blocker_note, next_action, action_owner, action_due,
+        awaiting_step, current_step_due, days_late, rag)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)`,
       [
         quarterId,
         r[0], r[1], r[2], r[3], r[4],
@@ -85,7 +97,8 @@ async function main() {
         d(r[14]), d(r[15]), r[16],
         d(r[17]), d(r[18]), r[19],
         d(r[20]), d(r[21]), r[22],
-        r[27], r[28], r[29], d(r[30])
+        r[27], r[28], r[29], d(r[30]),
+        r[23], d(r[24]), r[25], r[26]
       ]
     );
   }

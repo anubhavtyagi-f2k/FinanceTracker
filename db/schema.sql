@@ -48,13 +48,23 @@ CREATE TABLE IF NOT EXISTS tracker_rows (
   action_owner TEXT,
   action_due DATE,
 
+  awaiting_step TEXT,
+  current_step_due DATE,
+  days_late INTEGER,
+  rag TEXT,           -- Green / Amber / Red health status per the original sheet
+
   updated_at TIMESTAMPTZ DEFAULT now(),
   updated_by TEXT
 );
 
--- Migration-safe: adds quarter_id to a tracker_rows table that may already
--- exist from before multi-quarter support was introduced.
+-- Migration-safe: adds quarter_id and the sheet columns that were originally
+-- missed (Awaiting Step, Current Step Due, Days Late, RAG) to a tracker_rows
+-- table that may already exist.
 ALTER TABLE tracker_rows ADD COLUMN IF NOT EXISTS quarter_id INTEGER REFERENCES quarters(id);
+ALTER TABLE tracker_rows ADD COLUMN IF NOT EXISTS awaiting_step TEXT;
+ALTER TABLE tracker_rows ADD COLUMN IF NOT EXISTS current_step_due DATE;
+ALTER TABLE tracker_rows ADD COLUMN IF NOT EXISTS days_late INTEGER;
+ALTER TABLE tracker_rows ADD COLUMN IF NOT EXISTS rag TEXT;
 
 CREATE TABLE IF NOT EXISTS milestone_calendar (
   id SERIAL PRIMARY KEY,

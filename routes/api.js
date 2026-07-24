@@ -21,7 +21,8 @@ module.exports = function (pool) {
     'po_actual', 'po_status',
     'invoice_actual', 'invoice_status',
     'payment_actual', 'payment_status',
-    'blocker_note', 'next_action', 'action_owner', 'action_due'
+    'blocker_note', 'next_action', 'action_owner', 'action_due',
+    'awaiting_step', 'current_step_due', 'days_late', 'rag'
   ];
 
   // ---------- Quarters ----------
@@ -385,6 +386,7 @@ module.exports = function (pool) {
     // "Expected by now" = plan date has passed (or today); "Received" = actual is filled in
     let soExpected = 0, soReceived = 0, poExpected = 0, poReceived = 0;
     const deadlines = [];
+    const ragCounts = { Green: 0, Amber: 0, Red: 0 };
 
     rows.forEach(r => {
       totalValue += Number(r.q3_value || 0);
@@ -392,6 +394,7 @@ module.exports = function (pool) {
         const st = r[`${s}_status`] || 'On Track';
         if (stageStatus[s][st] !== undefined) stageStatus[s][st]++;
       });
+      if (r.rag && ragCounts[r.rag] !== undefined) ragCounts[r.rag]++;
 
       if (r.so_plan && new Date(r.so_plan) <= today) {
         soExpected++;
@@ -454,6 +457,7 @@ module.exports = function (pool) {
       po: { expected: poExpected, received: poReceived },
       so: { expected: soExpected, received: soReceived },
       deadlines,
+      ragCounts,
       quarterLabel: qRows[0] ? qRows[0].label : '',
       billing: {
         subscriptionTotalUsd,
@@ -503,6 +507,7 @@ module.exports = function (pool) {
       'PO Plan', 'PO Actual', 'PO Status',
       'Invoice Plan', 'Invoice Actual', 'Invoice Status',
       'Payment Plan', 'Payment Actual', 'Payment Status',
+      'Awaiting Step', 'Current Step Due', 'Days Late', 'RAG',
       'Blocker/Note', 'Next Action', 'Action Owner', 'Action Due']);
     tracker.forEach(r => ws.addRow([
       r.country, r.cluster, r.q3_value, r.fa_owner, r.bdf_owner,
@@ -512,6 +517,7 @@ module.exports = function (pool) {
       r.po_plan, r.po_actual, r.po_status,
       r.invoice_plan, r.invoice_actual, r.invoice_status,
       r.payment_plan, r.payment_actual, r.payment_status,
+      r.awaiting_step, r.current_step_due, r.days_late, r.rag,
       r.blocker_note, r.next_action, r.action_owner, r.action_due
     ]));
 
