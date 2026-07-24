@@ -54,6 +54,7 @@ $('#export-btn').addEventListener('click', () => { window.location.href = '/api/
 // ---------- Tabs ----------
 const TAB_TITLES = {
   dashboard: ['Dashboard', 'Beiersdorf × FieldAssist — FAOne billing snapshot & KPIs'],
+  'country-view': ['Country View', 'Everything for one country in one place'],
   tracker: ['Q3 Tracker', 'PO & collection pipeline by country'],
   'po-tracker': ['PO Tracker', 'Detailed PO log and status pipeline'],
   'user-counts': ['User Counts', 'Per-country user counts driving subscription billing'],
@@ -81,6 +82,7 @@ async function loadTab(tab) {
   try {
     if (tab === 'tracker') await renderTracker(content);
     else if (tab === 'dashboard') await renderDashboard(content);
+    else if (tab === 'country-view') await renderCountryView(content);
     else if (tab === 'po-tracker') await renderPoTracker(content);
     else if (tab === 'user-counts') await renderUserCounts(content);
     else if (tab === 'one-time') await renderOneTime(content);
@@ -652,6 +654,93 @@ async function renderSettings(content) {
       } catch (e) { flash('Save failed: ' + e.message); }
     });
   });
+}
+
+async function renderCountryView(content) {
+  const [trackerRows, poRows, userCounts, oneTime, carryover, countryRates] = await Promise.all([
+    (await api(`/tracker?quarter_id=${CURRENT_QUARTER.id}`)).json(),
+    (await api(`/po-log?quarter_id=${CURRENT_QUARTER.id}`)).json(),
+    (await api(`/user-counts?quarter_id=${CURRENT_QUARTER.id}`)).json(),
+    (await api(`/one-time?quarter_id=${CURRENT_QUARTER.id}`)).json(),
+    (await api('/carryover')).json(),
+    (await api('/country-rates')).json()
+  ]);
+
+  if (trackerRows.length === 0) {
+    content.innerHTML = '<p>No countries in this quarter yet.</p>';
+    return;
+  }
+
+  let html = '<div class="quarter-form">';
+  html += `<div><label>Country</label><select id="cv-country-select">${trackerRows.map(t => `<option value="${t.country}">${t.country}</option>`).join('')}</select></div>`;
+  html += '</div>';
+  html += '<div id="cv-body"></div>';
+  content.innerHTML = html;
+
+  function draw(country) {
+    const t = trackerRows.find(r => r.country === country);
+    const rate = countryRates.find(r => r.country === country);
+    const myPo = poRows.filter(r => r.country === country);
+    const myUc = userCounts.filter(r => r.country === country);
+    const myOt = oneTime.filter(r => r.country === country);
+    const myCarry = carryover.filter(r => r.country === country);
+
+    const ragColor = t.rag === 'Green' ? 'status-Done' : t.rag === 'Amber' ? 'status-OnTrack' : 'status-Delayed';
+    const poTotal = myPo.reduce((s, r) => s + Number(r.amount || 0), 0);
+    const otTotal = myOt.reduce((s, r) => s + Number(r.amount || 0), 0);
+    const userCount = myUc.reduce((s, r) => s + Number(r.user_count || 0), 0);
+    const subCharge = rate ? userCount * Number(rate.per_user_price || 0) : 0;
+    const currency = rate ? rate.currency_code : 'USD';
+
+    let b = '<div class="card-grid">';
+    b += `<div class="metric-card"><div class="icon">🚩</div><div><div class="label">RAG Status</div><div class="value"><span class="status-pill ${ragColor}">${t.rag || 'Not set'}</span></div></div></div>`;
+    b += `<div class="metric-card accent-green"><div class="icon">💰</div><div><div class="label">Q3 Value</div><div class="value">${Number(t.q3_value || 0).toLocaleString()}</div></div></div>`;
+    b += `<div class="metric-card"><div class="icon">📦</div><div><div class="label">PO Log Total</div><div class="value">${currency} ${poTotal.toLocaleString()}</div></div></div>`;
+    b += `<div class="metric-card accent-amber"><div class="icon">🧾</div><div><div class="label">One-time & Support</div><div class="value">${currency} ${otTotal.toLocaleString()}</div></div></div>`;
+    b += '</div>';
+
+    b += `<p style="color:#6b7686;font-size:13px">FA Owner: <strong>${t.fa_owner || '—'}</strong> · BDF Owner: <strong>${t.bdf_owner || '—'}</strong> · Awaiting Step: <strong>${t.awaiting_step || '—'}</strong> · Days Late: <strong>${t.days_late ?? 0}</strong></p>`;
+
+    b += '<h3>Pipeline stages</h3><div class="table-scroll"><table><thead><tr><th>Stage</th><th>Plan</th><th>Actual</th><th>Status</th></tr></thead><tbody>';
+    STAGES.forEach(([key, label]) => {
+      b += `<tr><td>${label}</td><td>${fmtDate(t[key + '_plan'])}</td><td>${fmtDate(t[key + '_actual'])}</td><td>${t[key + '_status'] || ''}</td></tr>`;
+    });
+    b += '</tbody></table></div>';
+
+    if (t.blocker_note || t.next_action) {
+      b += `<p style="margin-top:12px"><strong>Blocker:</strong> ${t.blocker_note || '—'}<br><strong>Next action:</strong> ${t.next_action || '—'} (${t.action_owner || 'unassigned'}, due ${fmtDate(t.action_due) || '—'})</p>`;
+    }
+
+    b += '<h3 style="margin-top:24px">PO Log entries</h3>';
+    b += myPo.length
+      ? '<div class="table-scroll"><table><thead><tr><th>PO Number</th><th>Amount</th><th>Currency</th><th>Date Raised</th><th>Date Received</th><th>Status</th></tr></thead><tbody>' +
+        myPo.map(r => `<tr><td>${r.po_number || ''}</td><td>${r.amount || ''}</td><td>${r.currency_code}</td><td>${fmtDate(r.date_raised)}</td><td>${fmtDate(r.date_received)}</td><td>${r.status}</td></tr>`).join('') +
+        '</tbody></table></div>'
+      : '<p>No PO log entries for this country.</p>';
+
+    b += '<h3 style="margin-top:24px">User Counts & Subscription</h3>';
+    b += myUc.length
+      ? `<p>Total users: <strong>${userCount}</strong> × ${currency} ${rate ? rate.per_user_price : 0}/user = <strong>${currency} ${subCharge.toLocaleString()}</strong></p>`
+      : '<p>No user count entries for this country.</p>';
+
+    b += '<h3 style="margin-top:24px">One-time & Support charges</h3>';
+    b += myOt.length
+      ? '<div class="table-scroll"><table><thead><tr><th>Category</th><th>Description</th><th>Amount</th><th>Currency</th><th>Date</th><th>Status</th></tr></thead><tbody>' +
+        myOt.map(r => `<tr><td>${r.category}</td><td>${r.description || ''}</td><td>${r.amount || ''}</td><td>${r.currency_code}</td><td>${fmtDate(r.charge_date)}</td><td>${r.status}</td></tr>`).join('') +
+        '</tbody></table></div>'
+      : '<p>No one-time or support charges for this country.</p>';
+
+    if (myCarry.length) {
+      b += '<h3 style="margin-top:24px">Q2 Carry-over</h3><div class="table-scroll"><table><thead><tr><th>Q2 PO Status</th><th>Invoice</th><th>Payment</th><th>Note</th><th>Owner</th><th>Due</th></tr></thead><tbody>';
+      b += myCarry.map(r => `<tr><td>${r.q2_po_status || ''}</td><td>${r.invoice_raised || ''}</td><td>${r.payment_received || ''}</td><td>${r.note || ''}</td><td>${r.owner || ''}</td><td>${fmtDate(r.due_date)}</td></tr>`).join('');
+      b += '</tbody></table></div>';
+    }
+
+    $('#cv-body').innerHTML = b;
+  }
+
+  $('#cv-country-select').addEventListener('change', e => draw(e.target.value));
+  draw(trackerRows[0].country);
 }
 
 checkSession();
