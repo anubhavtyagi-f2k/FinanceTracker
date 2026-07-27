@@ -202,6 +202,13 @@ module.exports = function (pool) {
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
       [qId, country, cluster || null, q3_value || null, fa_owner || null, bdf_owner || null]
     );
+
+    // So the country immediately shows up in Settings' billing rates table
+    await pool.query(
+      `INSERT INTO country_rates (country, currency_code, per_user_price) VALUES ($1,'USD',0) ON CONFLICT (country) DO NOTHING`,
+      [country]
+    );
+
     res.json(rows[0]);
   });
 
