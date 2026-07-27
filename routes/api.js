@@ -155,29 +155,38 @@ module.exports = function (pool) {
     const qClause = quarterId ? 'quarter_id = $2' : `quarter_id = (SELECT id FROM quarters WHERE is_current = true LIMIT 1)`;
     const qParams = quarterId ? [country, quarterId] : [country];
 
+    const { rows: exRates } = await pool.query('SELECT * FROM exchange_rates');
+    const rateMap = {};
+    exRates.forEach(r => rateMap[r.currency_code] = Number(r.rate_to_usd));
+    const toUsd = (amount, code) => Number(amount || 0) * (rateMap[code] ?? 1);
+
+    const { rows: countryRateRows } = await pool.query('SELECT * FROM country_rates WHERE country = $1', [country]);
+    const nativeCurrency = countryRateRows[0] ? countryRateRows[0].currency_code : 'USD';
+
     const { rows: trackerRows } = await pool.query(
       `SELECT carry_forward_amount FROM tracker_rows WHERE country = $1 AND ${qClause}`, qParams
     );
-    const carryForward = trackerRows.length ? Number(trackerRows[0].carry_forward_amount || 0) : 0;
+    const carryForwardNative = trackerRows.length ? Number(trackerRows[0].carry_forward_amount || 0) : 0;
+    const carryForward = toUsd(carryForwardNative, nativeCurrency);
 
-    const { rows: rateRows } = await pool.query('SELECT * FROM country_rates WHERE country = $1', [country]);
-    const rate = rateRows[0];
-    const currency = rate ? rate.currency_code : 'USD';
-    const perUserPrice = rate ? Number(rate.per_user_price || 0) : 0;
-
+    // Subscription now sums across every user type entered for this country —
+    // each type can carry its own currency, so convert each to USD before summing.
     const { rows: ucRows } = await pool.query(
-      `SELECT COALESCE(SUM(user_count),0) AS total FROM user_counts WHERE country = $1 AND ${qClause}`, qParams
+      `SELECT uc.user_count, ut.per_user_price, ut.currency_code
+       FROM user_counts uc JOIN user_types ut ON uc.user_type_id = ut.id
+       WHERE uc.country = $1 AND ${qClause}`, qParams
     );
-    const userCount = Number(ucRows[0].total || 0);
-    const subscription = userCount * perUserPrice;
+    let subscription = 0;
+    ucRows.forEach(r => { subscription += toUsd(Number(r.user_count || 0) * Number(r.per_user_price || 0), r.currency_code); });
 
     const { rows: otRows } = await pool.query(
-      `SELECT COALESCE(SUM(amount),0) AS total FROM one_time_support WHERE country = $1 AND ${qClause}`, qParams
+      `SELECT amount, currency_code FROM one_time_support WHERE country = $1 AND ${qClause}`, qParams
     );
-    const oneTime = Number(otRows[0].total || 0);
+    let oneTime = 0;
+    otRows.forEach(r => { oneTime += toUsd(r.amount, r.currency_code); });
 
     res.json({
-      country, currency,
+      country, currency: 'USD',
       subscription, oneTime, carryForward,
       suggestedAmount: subscription + oneTime + carryForward
     });
@@ -289,30 +298,76 @@ module.exports = function (pool) {
     res.json({ ok: true });
   });
 
+  // ---------- User Types (per-country rate cards, freely added) ----------
+  router.get('/user-types', async (req, res) => {
+    const country = req.query.country;
+    const q = country
+      ? await pool.query('SELECT * FROM user_types WHERE country = $1 ORDER BY type_name', [country])
+      : await pool.query('SELECT * FROM user_types ORDER BY country, type_name');
+    res.json(q.rows);
+  });
+
+  router.post('/user-types', async (req, res) => {
+    const { country, type_name, currency_code, per_user_price } = req.body;
+    if (!country || !type_name) return res.status(400).json({ error: 'country and type_name are required' });
+    const { rows } = await pool.query(
+      `INSERT INTO user_types (country, type_name, currency_code, per_user_price) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (country, type_name) DO UPDATE SET currency_code=$3, per_user_price=$4, updated_at=now() RETURNING *`,
+      [country, type_name, currency_code || 'USD', per_user_price || 0]
+    );
+    res.json(rows[0]);
+  });
+
+  router.patch('/user-types/:id', async (req, res) => {
+    const id = req.params.id;
+    const allowed = ['type_name', 'currency_code', 'per_user_price'];
+    const fields = Object.keys(req.body).filter(f => allowed.includes(f));
+    if (fields.length === 0) return res.status(400).json({ error: 'No editable fields provided' });
+    const setClause = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
+    const values = fields.map(f => req.body[f]);
+    values.push(id);
+    await pool.query(`UPDATE user_types SET ${setClause}, updated_at = now() WHERE id = $${values.length}`, values);
+    const { rows } = await pool.query('SELECT * FROM user_types WHERE id=$1', [id]);
+    res.json(rows[0]);
+  });
+
+  router.delete('/user-types/:id', async (req, res) => {
+    await pool.query('DELETE FROM user_types WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  });
+
   // ---------- User Counts (editable, drives subscription billing) ----------
   router.get('/user-counts', async (req, res) => {
     const quarterId = req.query.quarter_id;
     const q = quarterId
-      ? await pool.query('SELECT * FROM user_counts WHERE quarter_id = $1 ORDER BY country', [quarterId])
-      : await pool.query(`SELECT * FROM user_counts WHERE quarter_id = (SELECT id FROM quarters WHERE is_current = true LIMIT 1) ORDER BY country`);
+      ? await pool.query(
+          `SELECT uc.*, ut.type_name, ut.currency_code, ut.per_user_price
+           FROM user_counts uc LEFT JOIN user_types ut ON uc.user_type_id = ut.id
+           WHERE uc.quarter_id = $1 ORDER BY uc.country, ut.type_name`, [quarterId])
+      : await pool.query(
+          `SELECT uc.*, ut.type_name, ut.currency_code, ut.per_user_price
+           FROM user_counts uc LEFT JOIN user_types ut ON uc.user_type_id = ut.id
+           WHERE uc.quarter_id = (SELECT id FROM quarters WHERE is_current = true LIMIT 1)
+           ORDER BY uc.country, ut.type_name`);
     res.json(q.rows);
   });
 
   router.post('/user-counts', async (req, res) => {
-    const { quarter_id, country, user_count, effective_date } = req.body;
+    const { quarter_id, country, user_type_id, user_count, effective_date } = req.body;
     if (!country) return res.status(400).json({ error: 'Country is required' });
+    if (!user_type_id) return res.status(400).json({ error: 'A user type is required — add one in Settings first if none exist for this country' });
     const qId = quarter_id || (await pool.query('SELECT id FROM quarters WHERE is_current = true LIMIT 1')).rows[0].id;
     const { rows } = await pool.query(
-      `INSERT INTO user_counts (quarter_id, country, user_count, effective_date, updated_by)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [qId, country, user_count || 0, effective_date || null, req.session.userName]
+      `INSERT INTO user_counts (quarter_id, country, user_type_id, user_count, effective_date, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [qId, country, user_type_id, user_count || 0, effective_date || null, req.session.userName]
     );
     res.json(rows[0]);
   });
 
   router.patch('/user-counts/:id', async (req, res) => {
     const id = req.params.id;
-    const allowed = ['user_count', 'effective_date'];
+    const allowed = ['user_count', 'effective_date', 'user_type_id'];
     const fields = Object.keys(req.body).filter(f => allowed.includes(f));
     if (fields.length === 0) return res.status(400).json({ error: 'No editable fields provided' });
     const setClause = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
@@ -546,11 +601,14 @@ module.exports = function (pool) {
     const rateByCountry = {};
     countryRates.forEach(r => rateByCountry[r.country] = r);
 
-    const { rows: userCounts } = await pool.query(`SELECT * FROM user_counts WHERE ${currentQFilter.clause}`, currentQFilter.params);
+    const { rows: userCounts } = await pool.query(
+      `SELECT uc.*, ut.per_user_price, ut.currency_code AS type_currency
+       FROM user_counts uc LEFT JOIN user_types ut ON uc.user_type_id = ut.id
+       WHERE uc.${currentQFilter.clause}`, currentQFilter.params
+    );
     let subscriptionTotalUsd = 0;
     userCounts.forEach(u => {
-      const rate = rateByCountry[u.country];
-      if (rate) subscriptionTotalUsd += toUsd(Number(u.user_count || 0) * Number(rate.per_user_price || 0), rate.currency_code);
+      if (u.per_user_price != null) subscriptionTotalUsd += toUsd(Number(u.user_count || 0) * Number(u.per_user_price || 0), u.type_currency);
     });
 
     const { rows: oneTimeRows } = await pool.query(`SELECT * FROM one_time_support WHERE ${currentQFilter.clause}`, currentQFilter.params);

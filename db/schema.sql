@@ -136,15 +136,28 @@ CREATE TABLE IF NOT EXISTS po_log (
 
 ALTER TABLE po_log ADD COLUMN IF NOT EXISTS is_placeholder BOOLEAN DEFAULT false;
 
+CREATE TABLE IF NOT EXISTS user_types (
+  id SERIAL PRIMARY KEY,
+  country TEXT NOT NULL,
+  type_name TEXT NOT NULL,      -- e.g. Admin, Standard, Viewer — free-form per country
+  currency_code TEXT DEFAULT 'USD',
+  per_user_price NUMERIC DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(country, type_name)
+);
+
 CREATE TABLE IF NOT EXISTS user_counts (
   id SERIAL PRIMARY KEY,
   quarter_id INTEGER REFERENCES quarters(id),
   country TEXT NOT NULL,
+  user_type_id INTEGER REFERENCES user_types(id),
   user_count INTEGER DEFAULT 0,
   effective_date DATE,
   updated_at TIMESTAMPTZ DEFAULT now(),
   updated_by TEXT
 );
+
+ALTER TABLE user_counts ADD COLUMN IF NOT EXISTS user_type_id INTEGER REFERENCES user_types(id);
 
 CREATE TABLE IF NOT EXISTS one_time_support (
   id SERIAL PRIMARY KEY,

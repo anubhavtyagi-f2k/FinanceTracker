@@ -57,6 +57,26 @@ async function main() {
   }
   console.log(`Ensured billing rate rows for ${allCountries.length} countries.`);
 
+  // Migrate the old single-rate-per-country model into user_types: give every
+  // country a default "Standard" type carrying over its existing rate/currency,
+  // then link any pre-existing user_counts rows (which predate user_type_id) to it.
+  const { rows: allCountryRates } = await pool.query('SELECT * FROM country_rates');
+  for (const cr of allCountryRates) {
+    await pool.query(
+      `INSERT INTO user_types (country, type_name, currency_code, per_user_price)
+       VALUES ($1,'Standard',$2,$3) ON CONFLICT (country, type_name) DO NOTHING`,
+      [cr.country, cr.currency_code, cr.per_user_price]
+    );
+  }
+  const { rows: standardTypes } = await pool.query(`SELECT id, country FROM user_types WHERE type_name = 'Standard'`);
+  for (const st of standardTypes) {
+    await pool.query(
+      `UPDATE user_counts SET user_type_id = $1 WHERE country = $2 AND user_type_id IS NULL`,
+      [st.id, st.country]
+    );
+  }
+  console.log(`Ensured a default "Standard" user type for ${allCountryRates.length} countries and linked existing user counts to it.`);
+
   // Backfill Awaiting Step / Current Step Due / Days Late / RAG onto rows
   // that were seeded before these columns existed — matched by country.
   for (const r of seed.tracker) {

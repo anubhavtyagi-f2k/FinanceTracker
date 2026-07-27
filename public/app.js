@@ -499,27 +499,28 @@ async function renderPoTracker(content) {
 }
 
 async function renderUserCounts(content) {
-  const [rows, trackerRows] = await Promise.all([
+  const [rows, trackerRows, userTypes] = await Promise.all([
     (await api(`/user-counts?quarter_id=${CURRENT_QUARTER.id}`)).json(),
-    (await api(`/tracker?quarter_id=${CURRENT_QUARTER.id}`)).json()
+    (await api(`/tracker?quarter_id=${CURRENT_QUARTER.id}`)).json(),
+    (await api('/user-types')).json()
   ]);
-  const rates = await (await api('/country-rates')).json();
-  const rateByCountry = {};
-  rates.forEach(r => rateByCountry[r.country] = r);
+
+  function typesFor(country) { return userTypes.filter(t => t.country === country); }
 
   let html = '<div class="quarter-form">';
   html += `<div><label>Country</label><select id="new-uc-country">${trackerRows.map(t => `<option value="${t.country}">${t.country}</option>`).join('')}</select></div>`;
+  html += `<div><label>User Type</label><select id="new-uc-type"></select></div>`;
   html += '<div><label>User Count</label><input id="new-uc-count" type="number" placeholder="0"></div>';
   html += '<div><button class="add-btn" id="add-uc-btn">+ Add Row</button></div>';
   html += '</div>';
+  html += '<p id="uc-no-types-note" style="color:#d97706;font-size:13px;display:none">No user types set up for this country yet — add one in Settings first.</p>';
 
-  html += '<div class="table-scroll"><table><thead><tr><th>Country</th><th>User Count</th><th>Rate/User</th><th>Currency</th><th>Subscription Charge</th><th>Effective Date</th><th></th></tr></thead><tbody>';
+  html += '<div class="table-scroll"><table><thead><tr><th>Country</th><th>User Type</th><th>User Count</th><th>Rate/User</th><th>Currency</th><th>Subscription Charge</th><th>Effective Date</th><th></th></tr></thead><tbody>';
   rows.forEach(r => {
-    const rate = rateByCountry[r.country];
-    const price = rate ? Number(rate.per_user_price) : 0;
-    const currency = rate ? rate.currency_code : 'USD';
+    const price = Number(r.per_user_price || 0);
+    const currency = r.currency_code || 'USD';
     const charge = (Number(r.user_count || 0) * price).toLocaleString(undefined, { maximumFractionDigits: 2 });
-    html += `<tr data-id="${r.id}"><td>${r.country}</td>`;
+    html += `<tr data-id="${r.id}"><td>${r.country}</td><td>${r.type_name || '<em style="color:#dc2626">Type removed</em>'}</td>`;
     html += `<td><input type="number" data-field="user_count" value="${r.user_count || 0}"></td>`;
     html += `<td>${price.toLocaleString()}</td><td>${currency}</td>`;
     html += `<td>${currency} ${charge}</td>`;
@@ -527,14 +528,24 @@ async function renderUserCounts(content) {
     html += `<td><button class="delete-row-btn" data-del-id="${r.id}">✕</button></td></tr>`;
   });
   html += '</tbody></table></div>';
-  html += '<p style="font-size:12px;color:#6b7686;margin-top:10px">Per-user rates are set in Settings, by country.</p>';
   content.innerHTML = html;
+
+  function refreshTypeDropdown() {
+    const country = $('#new-uc-country').value;
+    const types = typesFor(country);
+    $('#new-uc-type').innerHTML = types.map(t => `<option value="${t.id}">${t.type_name} (${t.currency_code} ${t.per_user_price}/user)</option>`).join('');
+    $('#uc-no-types-note').style.display = types.length === 0 ? 'block' : 'none';
+  }
+  $('#new-uc-country').addEventListener('change', refreshTypeDropdown);
+  refreshTypeDropdown();
 
   $('#add-uc-btn').addEventListener('click', async () => {
     const country = $('#new-uc-country').value;
+    const user_type_id = $('#new-uc-type').value;
     const user_count = $('#new-uc-count').value || 0;
+    if (!user_type_id) { flash('Add a user type for this country in Settings first'); return; }
     try {
-      await api('/user-counts', { method: 'POST', body: JSON.stringify({ country, user_count, quarter_id: CURRENT_QUARTER.id }) });
+      await api('/user-counts', { method: 'POST', body: JSON.stringify({ country, user_type_id, user_count, quarter_id: CURRENT_QUARTER.id }) });
       flash('Added');
       renderUserCounts(content);
     } catch (e) { flash('Failed: ' + e.message); }
@@ -622,18 +633,39 @@ async function renderOneTime(content) {
 }
 
 async function renderSettings(content) {
-  const [countryRates, exchangeRates, milestones] = await Promise.all([
+  const [countryRates, exchangeRates, milestones, userTypes] = await Promise.all([
     (await api('/country-rates')).json(),
     (await api('/exchange-rates')).json(),
-    (await api('/milestones')).json()
+    (await api('/milestones')).json(),
+    (await api('/user-types')).json()
   ]);
 
   let html = '<h3>Billing rates by country</h3>';
+  html += '<p style="font-size:12px;color:#6b7686">Sets each country\'s default currency (used for PO Tracker and Carry-forward conversion).</p>';
   html += '<div class="table-scroll"><table><thead><tr><th>Country</th><th>Currency</th><th>Per-User Price</th></tr></thead><tbody>';
   countryRates.forEach(r => {
     html += `<tr data-id="${r.id}"><td>${r.country}</td>`;
     html += `<td><input type="text" data-field="currency_code" value="${r.currency_code}" style="width:70px"></td>`;
     html += `<td><input type="number" data-field="per_user_price" value="${r.per_user_price}"></td></tr>`;
+  });
+  html += '</tbody></table></div>';
+
+  html += '<h3 style="margin-top:24px">User Types & Rates by Country</h3>';
+  html += '<p style="font-size:12px;color:#6b7686">Add as many user types as needed per country (e.g. Admin, Standard, Viewer) — each can have its own currency and per-user rate. These drive the type dropdown in User Counts.</p>';
+  html += '<div class="quarter-form">';
+  html += `<div><label>Country</label><select id="new-ut-country">${countryRates.map(c => `<option value="${c.country}">${c.country}</option>`).join('')}</select></div>`;
+  html += '<div><label>Type name</label><input id="new-ut-name" placeholder="e.g. Admin"></div>';
+  html += '<div><label>Currency</label><input id="new-ut-currency" value="USD" style="width:70px"></div>';
+  html += '<div><label>Per-user price</label><input id="new-ut-price" type="number" placeholder="0.00"></div>';
+  html += '<div><button class="add-btn" id="add-ut-btn">+ Add User Type</button></div>';
+  html += '</div>';
+  html += '<div class="table-scroll"><table><thead><tr><th>Country</th><th>Type Name</th><th>Currency</th><th>Per-User Price</th><th></th></tr></thead><tbody>';
+  userTypes.forEach(ut => {
+    html += `<tr data-utid="${ut.id}"><td>${ut.country}</td>`;
+    html += `<td><input type="text" data-field="type_name" value="${ut.type_name}"></td>`;
+    html += `<td><input type="text" data-field="currency_code" value="${ut.currency_code}" style="width:70px"></td>`;
+    html += `<td><input type="number" data-field="per_user_price" value="${ut.per_user_price}"></td>`;
+    html += `<td><button class="delete-row-btn" data-del-utid="${ut.id}">✕</button></td></tr>`;
   });
   html += '</tbody></table></div>';
 
@@ -665,6 +697,37 @@ async function renderSettings(content) {
         flash('Saved');
       } catch (e) { flash('Save failed: ' + e.message); }
     });
+  });
+
+  content.querySelectorAll('tr[data-utid] [data-field]').forEach(el => {
+    el.addEventListener('change', async () => {
+      const id = el.closest('tr').dataset.utid;
+      try {
+        await api(`/user-types/${id}`, { method: 'PATCH', body: JSON.stringify({ [el.dataset.field]: el.value }) });
+        flash('Saved');
+      } catch (e) { flash('Save failed: ' + e.message); }
+    });
+  });
+
+  content.querySelectorAll('[data-del-utid]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Remove this user type? Any User Counts entries using it will lose their rate.')) return;
+      await api(`/user-types/${btn.dataset.delUtid}`, { method: 'DELETE' });
+      renderSettings(content);
+    });
+  });
+
+  $('#add-ut-btn').addEventListener('click', async () => {
+    const country = $('#new-ut-country').value;
+    const type_name = $('#new-ut-name').value.trim();
+    const currency_code = $('#new-ut-currency').value.trim() || 'USD';
+    const per_user_price = $('#new-ut-price').value || 0;
+    if (!type_name) { flash('Enter a type name'); return; }
+    try {
+      await api('/user-types', { method: 'POST', body: JSON.stringify({ country, type_name, currency_code, per_user_price }) });
+      flash('User type added');
+      renderSettings(content);
+    } catch (e) { flash('Failed: ' + e.message); }
   });
 
   content.querySelectorAll('tr[data-code] [data-field]').forEach(el => {
@@ -728,19 +791,18 @@ async function renderCountryView(content) {
   html += '<div id="cv-body"></div>';
   content.innerHTML = html;
 
-  function draw(country) {
+  async function draw(country) {
     const t = trackerRows.find(r => r.country === country);
     const rate = countryRates.find(r => r.country === country);
     const myPo = poRows.filter(r => r.country === country);
     const myUc = userCounts.filter(r => r.country === country);
     const myOt = oneTime.filter(r => r.country === country);
     const myCarry = carryover.filter(r => r.country === country);
+    const suggested = await (await api(`/suggested-po/${encodeURIComponent(country)}?quarter_id=${CURRENT_QUARTER.id}`)).json();
 
     const ragColor = t.rag === 'Green' ? 'status-Done' : t.rag === 'Amber' ? 'status-OnTrack' : 'status-Delayed';
     const poTotal = myPo.filter(r => !r.is_placeholder).reduce((s, r) => s + Number(r.amount || 0), 0);
     const otTotal = myOt.reduce((s, r) => s + Number(r.amount || 0), 0);
-    const userCount = myUc.reduce((s, r) => s + Number(r.user_count || 0), 0);
-    const subCharge = rate ? userCount * Number(rate.per_user_price || 0) : 0;
     const currency = rate ? rate.currency_code : 'USD';
 
     let b = '<div class="card-grid">';
@@ -751,7 +813,7 @@ async function renderCountryView(content) {
     b += '</div>';
 
     b += `<p style="color:#6b7686;font-size:13px">FA Owner: <strong>${t.fa_owner || '—'}</strong> · BDF Owner: <strong>${t.bdf_owner || '—'}</strong> · Awaiting Step: <strong>${t.awaiting_step || '—'}</strong> · Days Late: <strong>${t.days_late ?? 0}</strong> · Carry-forward: <strong>${currency} ${Number(t.carry_forward_amount || 0).toLocaleString()}</strong></p>`;
-    b += `<p style="color:#6b7686;font-size:13px">Suggested PO amount this quarter: <strong>${currency} ${(subCharge + otTotal + Number(t.carry_forward_amount || 0)).toLocaleString()}</strong> (Subscription + One-time/Support + Carry-forward)</p>`;
+    b += `<p style="color:#6b7686;font-size:13px">Suggested PO amount this quarter (USD): <strong>$${suggested.suggestedAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong> = Subscription $${suggested.subscription.toLocaleString(undefined, { maximumFractionDigits: 0 })} + One-time/Support $${suggested.oneTime.toLocaleString(undefined, { maximumFractionDigits: 0 })} + Carry-forward $${suggested.carryForward.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>`;
 
     b += '<h3>Pipeline stages</h3><div class="table-scroll"><table><thead><tr><th>Stage</th><th>Plan</th><th>Actual</th><th>Status</th></tr></thead><tbody>';
     STAGES.forEach(([key, label]) => {
@@ -772,7 +834,9 @@ async function renderCountryView(content) {
 
     b += '<h3 style="margin-top:24px">User Counts & Subscription</h3>';
     b += myUc.length
-      ? `<p>Total users: <strong>${userCount}</strong> × ${currency} ${rate ? rate.per_user_price : 0}/user = <strong>${currency} ${subCharge.toLocaleString()}</strong></p>`
+      ? '<div class="table-scroll"><table><thead><tr><th>User Type</th><th>Count</th><th>Rate/User</th><th>Currency</th><th>Subtotal</th></tr></thead><tbody>' +
+        myUc.map(r => `<tr><td>${r.type_name || 'Type removed'}</td><td>${r.user_count || 0}</td><td>${r.per_user_price || 0}</td><td>${r.currency_code || ''}</td><td>${((r.user_count || 0) * (r.per_user_price || 0)).toLocaleString()}</td></tr>`).join('') +
+        '</tbody></table></div>'
       : '<p>No user count entries for this country.</p>';
 
     b += '<h3 style="margin-top:24px">One-time & Support charges</h3>';
